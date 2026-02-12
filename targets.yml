@@ -1,0 +1,17 @@
+- group_name: workstations
+  end_points:
+    - 172.17.0.2
+  commands:
+    - touch test
+    - ls -la
+    - ip a
+
+- group_name: routers
+  end_points:
+    - 172.17.0.3
+  commands:
+    - ip a
+    - ls -la
+
+
+
