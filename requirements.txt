@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+openai
+httpx
+pydantic
+torch
+vllm
+PyYAML

@@ -1,0 +1,19 @@
+broker:
+  host: "0.0.0.0"
+  port: 8000
+  base_vllm_port: 8001
+  idle_timeout: 600
+  gpu_memory_utilization: 0.45
+  max_replicas_per_model: 1
+  check_interval: 60
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# List of models allowed to be loaded on-demand
+models:
+  - id: "facebook/opt-125m"
+    max_replicas: 1
+  - id: "facebook/opt-350m"
+    max_replicas: 1
