@@ -95,8 +95,12 @@ impl server::Handler for Server {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        session.channel_success(channel);
-        session.data(channel, CryptoVec::from(&b"rust-shell> "[..]))?;
+        println!("Shell request denied (Agent is ad-hoc only)");
+        session.channel_success(channel)?;
+        session.data(channel, CryptoVec::from("Error: This agent does not support interactive shells.\r\n"))?;
+        session.exit_status_request(channel, 1)?;
+        session.close(channel)?;
+        
         Ok(())
     }
 
@@ -129,7 +133,7 @@ impl server::Handler for Server {
         let super_sercret = String::from_utf8_lossy(&data);
         if super_sercret.contains("disk usage") {
             println!("{:#?}", data);
-            session.data(channel, CryptoVec::from("YES YOU HAVE TRIGGERED CUSTOM FUNCTION"))?;
+            session.data(channel, CryptoVec::from("YES YOU HAVE TRIGGERED CUSTOM FUNCTION\r\n"))?;
 
         } else {
 
@@ -152,7 +156,8 @@ impl server::Handler for Server {
         }
 
 
-        session.exit_status_request(channel, 0)?; // Signal that the process finished
+        session.exit_status_request(channel, 0)?;
+        session.eof(channel)?;
         session.close(channel)?; 
         Ok(())
     }
@@ -188,52 +193,72 @@ impl server::Handler for Server {
         Ok(())
     }
 
-    async fn data(
-        &mut self,
-        channel: ChannelId,
-        data: &[u8],
-        session: &mut Session,
-    ) -> Result<(), Self::Error> {
-        for &byte in data {
-            if byte == b'\r' || byte == b'\n' {
-                let received_cmd = self.buffer.trim();
+// ➜  server git:(server) ✗ ssh-keygen -f '/home/andrey/.ssh/known_hosts' -R '[localhost]:2222' && ssh -p 2222 -nNf -MS /tmp/mcp-socket localhost
+
+// # Host [localhost]:2222 found: line 4
+// /home/andrey/.ssh/known_hosts updated.
+// Original contents retained as /home/andrey/.ssh/known_hosts.old
+// The authenticity of host '[localhost]:2222 ([127.0.0.1]:2222)' can't be established.
+// ED25519 key fingerprint is SHA256:kj5fhV+4BP3HIzTnrDtzLCPSI3xraqPqseLAIQFsZ7o.
+// This key is not known by any other names.
+// Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+// Warning: Permanently added '[localhost]:2222' (ED25519) to the list of known hosts.
+// ➜  server git:(server) ✗ ssh -S /tmp/mcp-socket localhost "disk usage"
+// ssh -S /tmp/mcp-socket localhost "whoami"
+// YES YOU HAVE TRIGGERED CUSTOM FUNCTION
+// andrey
+// ➜  server git:(server) ✗ ssh -S /tmp/mcp-socket -O exit localhost
+// Exit request sent.
+// ➜  server git:(server) ✗
+
+
+
+    // async fn data(
+    //     &mut self,
+    //     channel: ChannelId,
+    //     data: &[u8],
+    //     session: &mut Session,
+    // ) -> Result<(), Self::Error> {
+    //     for &byte in data {
+    //         if byte == b'\r' || byte == b'\n' {
+    //             let received_cmd = self.buffer.trim();
                 
-                let received_cmd_output = Command::new("sh").arg("-c").arg(received_cmd).output().await;
+    //             let received_cmd_output = Command::new("sh").arg("-c").arg(received_cmd).output().await;
 
-                session.data(channel, CryptoVec::from(&b"\r\n"[..]))?;
+    //             session.data(channel, CryptoVec::from(&b"\r\n"[..]))?;
 
-                match received_cmd_output {
-                    Ok(output) => {
-                        let display_bytes = if !output.stdout.is_empty() {
-                            &output.stdout
-                        } else {
-                            &output.stderr
-                        };
-                        let formatted = String::from_utf8_lossy(display_bytes).replace("\n", "\r\n");
-                        session.data(channel, CryptoVec::from(formatted))?;
-                    }
-                    Err(e) => {
-                        session.data(channel, CryptoVec::from(format!("Error: {}\r\n", e)))?;
-                    }
-                }
+    //             match received_cmd_output {
+    //                 Ok(output) => {
+    //                     let display_bytes = if !output.stdout.is_empty() {
+    //                         &output.stdout
+    //                     } else {
+    //                         &output.stderr
+    //                     };
+    //                     let formatted = String::from_utf8_lossy(display_bytes).replace("\n", "\r\n");
+    //                     session.data(channel, CryptoVec::from(formatted))?;
+    //                 }
+    //                 Err(e) => {
+    //                     session.data(channel, CryptoVec::from(format!("Error: {}\r\n", e)))?;
+    //                 }
+    //             }
 
-                session.data(channel, CryptoVec::from(&b"rust-shell> "[..]))?;
+    //             session.data(channel, CryptoVec::from(&b"rust-shell> "[..]))?;
 
-                self.buffer.clear();
-            } else if byte == 127 {
-                self.buffer.pop();
-                session.data(channel, CryptoVec::from(&b"\x08 \x08"[..]))?;
-            } else if byte == 3 {
-                session.data(channel, CryptoVec::from(&b"logout\r\n"[..]))?;
-                return Err(russh::Error::Disconnect);
-            } else {
-                self.buffer.push(byte as char);
-                session.data(channel, CryptoVec::from(&[byte][..]))?;
-            }
-        }
+    //             self.buffer.clear();
+    //         } else if byte == 127 {
+    //             self.buffer.pop();
+    //             session.data(channel, CryptoVec::from(&b"\x08 \x08"[..]))?;
+    //         } else if byte == 3 {
+    //             session.data(channel, CryptoVec::from(&b"logout\r\n"[..]))?;
+    //             return Err(russh::Error::Disconnect);
+    //         } else {
+    //             self.buffer.push(byte as char);
+    //             session.data(channel, CryptoVec::from(&[byte][..]))?;
+    //         }
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
 }
 
