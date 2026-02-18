@@ -21,3 +21,6 @@ dist/
 # IDE
 .vscode/
 .idea/
+
+# Rust target
+target/
