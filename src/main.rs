@@ -108,38 +108,70 @@ impl server::Handler for Server {
         Ok(server::Auth::Accept)
     }
 
+    // // Inside your russh server handler
+    // async fn auth_publickey(&mut self, user: &str, key: &russh::keys::PublicKey) -> Result<Auth, Self::Error> {
+    //     // Only allow the user 'orchestrator' with a SPECIFIC key fingerprint
+    //     if user == "orchestrator" && key.fingerprint() == "SHA256:your_central_point_key_here" {
+    //         Ok(Auth::Accept)
+    //     } else {
+    //         Ok(Auth::Reject) // Everyone else is kicked out here
+    //     }
+    // }
+
     async fn exec_request(
         &mut self,
         channel: ChannelId,
         data: &[u8], // This contains the command string
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        session.channel_success(channel); // Acknowledge the request
+        session.channel_success(channel)?; // Acknowledge the request
         let command_str = String::from_utf8_lossy(data);
+        let super_sercret = String::from_utf8_lossy(&data);
+        if super_sercret.contains("disk usage") {
+            println!("{:#?}", data);
+            session.data(channel, CryptoVec::from("YES YOU HAVE TRIGGERED CUSTOM FUNCTION"))?;
 
-        // Execute the command using sh -c
-        let output = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(command_str.as_ref())
-            .output()
-            .await;
+        } else {
 
-        let response = match output {
-            Ok(out) => {
-                let mut combined = out.stdout;
-                combined.extend(out.stderr);
-                // Replace newlines with \r\n for TTY compatibility
-                let text = String::from_utf8_lossy(&combined).replace("\n", "\r\n");
-                CryptoVec::from(text.into_bytes())
-            }
-            Err(e) => CryptoVec::from(format!("Error: {}\r\n", e).into_bytes()),
-        };
+            let output = tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg(command_str.as_ref())
+                .output()
+                .await;
+    
+            let response = match output {
+                Ok(out) => {
+                    let mut combined = out.stdout;
+                    combined.extend(out.stderr);
+                    let text = String::from_utf8_lossy(&combined).replace("\n", "\r\n");
+                    CryptoVec::from(text.into_bytes())
+                }
+                Err(e) => CryptoVec::from(format!("Error: {}\r\n", e).into_bytes()),
+            };
+            session.data(channel, response)?;
+        }
 
-        session.data(channel, response)?;
-        session.exit_status_request(channel, 0); // Signal that the process finished
+
+        session.exit_status_request(channel, 0)?; // Signal that the process finished
         session.close(channel)?; 
         Ok(())
     }
+    // async fn exec_request(&mut self, channel: ChannelId, data: &[u8], session: &mut Session) -> Result<(), Self::Error> {
+    //     let command = std::str::from_utf8(data)?;
+
+    //     match command {
+    //         "disk_usage" => {
+    //             let out = std::process::Command::new("df").arg("-h").output().await?;
+    //             session.data(channel, out.stdout.into())?;
+    //         },
+    //         _ => {
+    //             // If they try "rm -rf /" or even "ls", you return an error
+    //             session.data(channel, "Error: Unknown or unauthorized command.\r\n".into())?;
+    //         }
+    //     }
+    //     session.close(channel)?;
+    //     Ok(())
+    // }
 
     async fn pty_request(
         &mut self,
@@ -152,24 +184,9 @@ impl server::Handler for Server {
         modes: &[(Pty, u32)],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        session.channel_success(channel);
+        session.channel_success(channel)?;
         Ok(())
     }
-
-    // async fn data(
-    //     &mut self,
-    //     channel: ChannelId,
-    //     data: &[u8],
-    //     session: &mut Session,
-    // ) -> Result<(), Self::Error> {
-
-    //     let response = CryptoVec::from(String::from_utf8_lossy(data));
-    //     session.data(channel, response)?;
-
-    
-    //     Ok(())
-
-    // }
 
     async fn data(
         &mut self,
@@ -179,29 +196,42 @@ impl server::Handler for Server {
     ) -> Result<(), Self::Error> {
         for &byte in data {
             if byte == b'\r' || byte == b'\n' {
-                // User pressed Enter: Execute the buffer
-                let cmd = self.buffer.trim().to_string();
-                self.buffer.clear();
+                let received_cmd = self.buffer.trim();
                 
+                let received_cmd_output = Command::new("sh").arg("-c").arg(received_cmd).output().await;
+
                 session.data(channel, CryptoVec::from(&b"\r\n"[..]))?;
 
-                if !cmd.is_empty() {
-                    let output = tokio::process::Command::new("sh").arg("-c").arg(&cmd).output().await;
-                    if let Ok(out) = output {
-                        let text = String::from_utf8_lossy(&out.stdout).replace("\n", "\r\n");
-                        session.data(channel, CryptoVec::from(text.into_bytes()))?;
+                match received_cmd_output {
+                    Ok(output) => {
+                        let display_bytes = if !output.stdout.is_empty() {
+                            &output.stdout
+                        } else {
+                            &output.stderr
+                        };
+                        let formatted = String::from_utf8_lossy(display_bytes).replace("\n", "\r\n");
+                        session.data(channel, CryptoVec::from(formatted))?;
+                    }
+                    Err(e) => {
+                        session.data(channel, CryptoVec::from(format!("Error: {}\r\n", e)))?;
                     }
                 }
+
                 session.data(channel, CryptoVec::from(&b"rust-shell> "[..]))?;
-            } else if byte == 127 { // Backspace
+
+                self.buffer.clear();
+            } else if byte == 127 {
                 self.buffer.pop();
                 session.data(channel, CryptoVec::from(&b"\x08 \x08"[..]))?;
+            } else if byte == 3 {
+                session.data(channel, CryptoVec::from(&b"logout\r\n"[..]))?;
+                return Err(russh::Error::Disconnect);
             } else {
-                // Echo character and add to buffer
                 self.buffer.push(byte as char);
                 session.data(channel, CryptoVec::from(&[byte][..]))?;
             }
         }
+
         Ok(())
     }
 
