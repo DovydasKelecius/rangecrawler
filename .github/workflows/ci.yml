@@ -11,8 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write   # Required to push changes back
-      actions: write    # Required to manage actions
-      workflows: write  # Required if Prettier touches .github/workflows/
     steps:
     - uses: actions/checkout@v4
       with:
@@ -39,8 +37,7 @@ jobs:
       run: ruff check . --fix
 
     - name: Run Prettier
-      # Exclude .github/workflows to avoid permission issues if workflows:write is tricky
-      run: prettier --write "**/*.{js,json,md,yml,yaml}" --ignore-path .gitignore
+      run: prettier --write "**/*.{js,json,md,yml,yaml}"
 
     - name: Commit and Push changes
       uses: stefanzweifel/git-auto-commit-action@v4

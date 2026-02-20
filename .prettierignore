@@ -1,0 +1,5 @@
+.github/workflows/
+venv/
+node_modules/
+*.db
+rangecrawler.db
