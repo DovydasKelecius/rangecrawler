@@ -81,7 +81,8 @@ async def forward_to_llm_api(model_id: str, path: str, body: Dict[str, Any]):
 
 async def execute_single_tool(func_name: str, func_args_str: str, workspace_path: Path, client_ip: str):
     """Wrapper to execute one tool and catch errors."""
-    tool_map = {
+    from typing import Callable, Awaitable
+    tool_map: Dict[str, Callable[..., Awaitable[Any]]] = {
         "read_file": LocalTools.read_file,
         "write_file": LocalTools.write_file,
         "list_directory": LocalTools.list_directory,

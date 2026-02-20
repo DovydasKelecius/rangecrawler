@@ -11,7 +11,8 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     2. config.yaml file
     3. None (auth fails)
     """
-    data = {}
+    from typing import Dict, Any
+    data: Dict[str, Any] = {}
     if os.path.exists(path):
         try:
             with open(path, "r") as f:
