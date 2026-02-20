@@ -1,0 +1,13 @@
+services:
+  # The RangeCrawler Broker itself
+  broker:
+    build:
+      context: .
+      dockerfile: tests/mock_env/Dockerfile
+    ports:
+      - "8005:8005"
+    volumes:
+      - ./config.yaml:/app/config.yaml # Mount local config for easy testing
+    environment:
+      - PYTHONPATH=/app
+    command: python src/main.py --mode broker --config config.yaml

@@ -1,12 +1,11 @@
 import httpx
 import json
 import logging
+import time
 from openai import OpenAI
 
 # 1. Configuration
 BROKER_URL = "http://localhost:8000"
-# Use your Gemini API key here
-API_KEY = "your-gemini-api-key"
 
 def register_and_test():
     # 2. Register Client IP
@@ -22,21 +21,21 @@ def register_and_test():
         print(f"[-] Registration failed: {e}")
         return
 
-    # 3. Test Proxying
-    # Set model to whatever you configured in config.yaml (e.g., gemini-1.5-flash)
-    target_model = "gemini-1.5-flash" 
-    print(f"[*] Sending request to broker for model '{target_model}'...")
+    # 3. Test Proxying to Gemini
+    # Updated to gemini-2.5-flash
+    target_model = "gemini-2.5-flash" 
+    print(f"[*] Sending request to broker for Gemini model '{target_model}'...")
     
-    # The broker forwards the api_key to the remote_url
-    client = OpenAI(base_url=f"{BROKER_URL}/v1", api_key=API_KEY)
+    # Note: Broker auto-injects the API key from config.yaml
+    client = OpenAI(base_url=f"{BROKER_URL}/v1", api_key="placeholder")
     
     try:
         response = client.chat.completions.create(
             model=target_model,
-            messages=[{"role": "user", "content": "Hello, are you working through the RangeCrawler proxy?"}],
+            messages=[{"role": "user", "content": "Hello Gemini! Say 'Success' if you can read this."}],
             stream=False
         )
-        print(f"[+] Response content: {response.choices[0].message.content}")
+        print(f"[+] Gemini response: {response.choices[0].message.content}")
     except Exception as e:
         print(f"[-] Inference failed: {e}")
 

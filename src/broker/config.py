@@ -1,7 +1,7 @@
 import yaml
 import os
 import logging
-from .models import AppConfig, BrokerConfig, ModelConfig
+from .models import AppConfig, BrokerConfig, ModelConfig, AuthConfig
 
 def load_config(path: str = "config.yaml") -> AppConfig:
     """Load and validate the broker configuration from YAML."""
@@ -16,8 +16,9 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         return AppConfig(
             broker=BrokerConfig(**data.get("broker", {})),
             models=[ModelConfig(**m) for m in data.get("models", [])],
+            auth=AuthConfig(**data.get("auth", {})),
             logging_level=data.get("logging", {}).get("level", "INFO")
         )
     except Exception as e:
         logging.error(f"Error loading config from {path}: {e}")
-        return AppConfig(broker=BrokerConfig(), models=[])
+        return AppConfig(broker=BrokerConfig(), models=[], auth=AuthConfig())

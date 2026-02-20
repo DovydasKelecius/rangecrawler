@@ -14,10 +14,15 @@ class BrokerConfig(BaseModel):
     port_assignment_url: Optional[str] = None
     default_port: int = 8000
     idle_timeout: int = 600
+    check_interval: int = 60
+
+class AuthConfig(BaseModel):
+    gemini_api_key: Optional[str] = None
 
 class AppConfig(BaseModel):
     broker: BrokerConfig
     models: List[ModelConfig]
+    auth: AuthConfig = Field(default_factory=AuthConfig)
     logging_level: str = "INFO"
 
 class SessionStats(BaseModel):

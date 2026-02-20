@@ -1,70 +1,61 @@
-# RangeCrawler: GEMINI context
+# RangeCrawler: Secure Reverse Proxy context
 
-RangeCrawler is a portable, secure brokerage system for LLM inference. It acts as a smart router and dynamic loader for vLLM instances, allowing multiple models to be served on a single GPU by loading them on-demand and unloading them when idle.
+RangeCrawler is a minimalist, secure reverse-proxy system for LLM inference. It is designed to act as a secure gateway for routing, whitelisting, and monitoring LLM requests across local and remote endpoints (including OpenAI and Gemini compatible APIs).
 
-## Project Overview
+## Core Features & Workflow
 
-- **Purpose:** Provide an OpenAI-compatible API that manages the lifecycle of multiple LLM models on shared GPU resources.
-- **Core Functionality:**
-    - **Dynamic Model Loading:** Models are started (via vLLM) only when first requested.
-    - **Smart Routing:** Intercepts `/v1/completions` and `/v1/chat/completions` requests and routes them to the correct backend instance.
-    - **Idle Management:** Automatically shuts down model instances after a period of inactivity to free up VRAM.
-    - **GPU Cache Management:** Explicitly clears the GPU cache after unloading a model to prevent memory fragmentation.
-    - **Request Queuing:** Gracefully handles incoming requests while a model is being loaded.
+- **Dynamic Port Assignment**: At startup, the broker can query an external endpoint to obtain its assigned listen port, allowing for easy integration into dynamic environments.
+- **IP Whitelisting**: Mandatory registration via `/register`. All other requests from non-registered IPs are rejected with a `403 Forbidden`.
+- **Transparent Proxying**: Intercepts OpenAI-compatible chat and completion requests and forwards them to the target remote endpoints.
+- **SSH Tunneling**: Automatically establishes and reuses SSH tunnels for remote vLLM instances that are behind firewalls.
+- **Resource Monitoring**: Tracks session stats (IP, last active time, and token usage) as a hook for future budgeting and time-based access control.
 
-## Architecture & Tech Stack
+## Project Structure
 
-- **Framework:** [FastAPI](https://fastapi.tiangolo.com/) for the main broker API.
-- **Inference Engine:** [vLLM](https://github.com/vllm-project/vllm) for high-performance model serving.
-- **Proxying:** [httpx](https://www.python-httpx.org/) for asynchronous request forwarding and streaming support.
-- **Configuration:** [PyYAML](https://pyyaml.org/) and [Pydantic](https://docs.pydantic.dev/) for structured settings.
-- **GPU Management:** [PyTorch](https://pytorch.org/) for cache management.
-
-### Key Components
-
-- `src/main.py`: Entry point for the application.
-- `src/broker/server.py`: FastAPI server implementing the OpenAI-compatible API.
-- `src/broker/manager.py`: Core logic for managing vLLM processes, ports, and lifecycle states.
+- `src/main.py`: Entry point; handles dynamic port assignment and server launch.
+- `src/broker/server.py`: FastAPI server implementing the reverse proxy and security middleware.
+- `src/broker/manager.py`: Core logic for IP registration, endpoint resolution, and SSH tunnel management.
+- `src/broker/models.py`: Pydantic models for configuration and session tracking.
 - `src/broker/config.py`: Configuration loading and validation.
-- `src/broker/models.py`: Pydantic data models for tracking instance states.
+- `config.yaml`: Central source of truth for all settings (models, auth, broker).
 
-## Building and Running
+## Tech Stack
+
+- **Framework**: FastAPI + Uvicorn
+- **Client**: httpx (for async proxying)
+- **Tunnelling**: sshtunnel (Paramiko based)
+- **Validation**: Pydantic v2
+
+## Running the Project
 
 ### Prerequisites
 - Python 3.10+
-- CUDA-compatible GPU and drivers.
-- `torch` and `vLLM` installed with CUDA support.
+- Requirements: `pip install -r requirements.txt`
 
-### Commands
-- **Install Dependencies:**
-  ```bash
-  pip install -r requirements.txt
-  ```
-- **Run Broker:**
-  ```bash
-  python src/main.py --mode broker
-  ```
-- **Configuration:**
-  Edit `config.yaml` to define allowed models and resource limits (e.g., `gpu_memory_utilization`).
-
-## Development Conventions
-
-- **Async First:** All network and management operations should be asynchronous using `asyncio` and `httpx.AsyncClient`.
-- **Model Whitelisting:** The broker only allows loading models explicitly defined in `config.yaml` for security and resource control.
-- **Logging:** Use the project-wide logger (configured via `config.yaml`). Log key lifecycle events (loading, ready, unloading, errors).
-- **Error Handling:** Ensure that failed model startups are caught, instances are cleaned up, and pending requests are notified/failed gracefully.
-- **Resource Discipline:** Always verify that `gpu_memory_utilization` settings allow for the desired number of concurrent models.
-
-## Usage Example
-
-```python
-from openai import OpenAI
-
-# The broker intercepts this and loads 'facebook/opt-125m' if not already running
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="range-crawler")
-
-response = client.chat.completions.create(
-    model="facebook/opt-125m",
-    messages=[{"role": "user", "content": "Explain quantum entanglement."}]
-)
+### Local Development
+```bash
+# Set PYTHONPATH to include the project root
+export PYTHONPATH=$PYTHONPATH:.
+# Start the broker
+python src/main.py --mode broker
 ```
+
+### Configuration (`config.yaml`)
+Control your models and security settings directly from the YAML file:
+```yaml
+broker:
+  host: "127.0.0.1"
+  default_port: 8000
+models:
+  - id: "gemini-1.5-flash"
+    remote_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+auth:
+  gemini_api_key: "YOUR_KEY_HERE"
+```
+
+## Security & Best Practices
+
+1. **IP Pinning**: The broker defaults to listening on `127.0.0.1` unless configured otherwise.
+2. **Whitelist First**: Clients MUST call `/register` before they can send inference requests.
+3. **Key Injection**: The broker can auto-inject API keys (like Gemini) into forwarded requests, keeping them hidden from the final client.
+4. **Minimal Dependencies**: All local GPU-heavy dependencies (torch, vLLM) have been removed from the broker to keep it lightweight.

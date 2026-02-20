@@ -1,20 +1,17 @@
 broker:
-  host: "0.0.0.0"
-  port_assignment_url: "http://localhost:9999/api/port" # External API to get listen port
-  default_port: 8000
-  idle_timeout: 600
+  host: "0.0.0.0" # Listen on all interfaces inside container
+  port_assignment_url: null 
+  default_port: 8005
+  idle_timeout: 300
+  check_interval: 60
 
-# Mapping models to remote (or local) endpoints
-# 'ssh_host' is optional; if present, the broker will tunnel through it.
 models:
-  - id: "facebook/opt-125m"
-    remote_url: "http://localhost:8001"
-    # ssh_host: "remote-worker-1"
-    # ssh_username: "user"
-    # ssh_pkey_path: "~/.ssh/id_rsa"
-  - id: "meta-llama/Llama-3-8b"
-    remote_url: "http://192.168.1.50:8000"
+  - id: "gemini-2.0-flash"
+    remote_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+auth:
+  gemini_api_key: "AIzaSyBvDDDBm1DSnAlU3oI_FGBQaOt869wvn58"
