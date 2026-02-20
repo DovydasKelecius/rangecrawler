@@ -10,11 +10,13 @@ jobs:
   lint-and-fix:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Required to push changes back
+      contents: write   # Required to push changes back
+      actions: write    # Required to manage actions
+      workflows: write  # Required if Prettier touches .github/workflows/
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: ${{ github.head_ref }} # Checkout the branch, not just the commit
+        ref: ${{ github.head_ref }}
 
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -37,7 +39,8 @@ jobs:
       run: ruff check . --fix
 
     - name: Run Prettier
-      run: prettier --write "**/*.{js,json,md,yml,yaml}"
+      # Exclude .github/workflows to avoid permission issues if workflows:write is tricky
+      run: prettier --write "**/*.{js,json,md,yml,yaml}" --ignore-path .gitignore
 
     - name: Commit and Push changes
       uses: stefanzweifel/git-auto-commit-action@v4
