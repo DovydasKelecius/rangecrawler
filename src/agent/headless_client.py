@@ -14,8 +14,7 @@ def test_listing_models():
         print(f"- {model.id}")
 
 def test_completion(model_name="facebook/opt-125m"):
-    print(f"
-Generating text with model: {model_name}")
+    print(f"Generating text with model: {model_name}")
     start = time.time()
     try:
         completion = client.completions.create(
@@ -29,8 +28,7 @@ Generating text with model: {model_name}")
         print(f"Error: {e}")
 
 def test_chat_completion(model_name="facebook/opt-125m"):
-    print(f"
-Chatting with model: {model_name}")
+    print(f"Chatting with model: {model_name}")
     start = time.time()
     try:
         completion = client.chat.completions.create(

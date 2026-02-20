@@ -3,9 +3,8 @@ import logging
 import os
 import json
 import sqlite3
-import shutil
 from datetime import datetime
-from typing import Dict, Set, Optional, List, Any
+from typing import Dict
 from pathlib import Path
 from urllib.parse import urlparse
 from sshtunnel import SSHTunnelForwarder

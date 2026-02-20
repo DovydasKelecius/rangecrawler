@@ -2,8 +2,8 @@ import httpx
 import logging
 import json
 import asyncio
-from fastapi import FastAPI, Request, HTTPException, Depends, Response
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, Request, HTTPException, Response
+from fastapi.responses import JSONResponse
 from typing import Dict, Any, List
 from datetime import datetime
 from pathlib import Path
@@ -74,7 +74,7 @@ async def forward_to_llm_api(model_id: str, path: str, body: Dict[str, Any]):
             logger.error(f"Upstream API Error ({resp.status_code}): {resp.text}")
             try:
                 err_data = resp.json()
-            except:
+            except Exception:
                 err_data = {"error": resp.text}
             raise HTTPException(status_code=resp.status_code, detail=err_data)
         return resp.json()

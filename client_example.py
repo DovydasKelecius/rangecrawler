@@ -1,7 +1,4 @@
 import httpx
-import json
-import logging
-import time
 from openai import OpenAI
 
 # 1. Configuration

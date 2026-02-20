@@ -1,8 +1,4 @@
 import httpx
-from openai import OpenAI
-import sys
-import json
-import os
 
 # --- Configuration ---
 BROKER_URL = "http://127.0.0.1:8005"
@@ -17,7 +13,7 @@ def run_test():
         print(f"[*] Registering IP at {register_url}...")
         resp = httpx.post(register_url, timeout=5.0)
         if resp.status_code == 200:
-            print(f"[+] Registration successful.")
+            print("[+] Registration successful.")
         else:
             print(f"[-] Registration failed: {resp.text}")
             return
@@ -31,7 +27,7 @@ def run_test():
     # Using a raw httpx request so we can see the custom headers
     payload = {
         "model": TARGET_MODEL,
-        "messages": [4
+        "messages": [
             {"role": "user", "content": "List the files, read them and output to the 'agent_summary.txt', do a sentence each on what it does like /init and write 'agent_summary.txt'. Iteratie until every file is read and written about, create a todo list if needed. Done."}
         ],
         "stream": False
@@ -55,8 +51,8 @@ def run_test():
         print(response_data["choices"][0]["message"]["content"])
         print("-" * 50)
         
-        print(f"\n[!] Note: agent_summary.txt is INSIDE the container.")
-        print(f"    Check with: docker exec $(docker ps -q --filter ancestor=rangecrawler-broker) cat /app/agent_summary.txt")
+        print("\n[!] Note: agent_summary.txt is INSIDE the container.")
+        print("    Check with: docker exec $(docker ps -q --filter ancestor=rangecrawler-broker) cat /app/agent_summary.txt")
             
     except Exception as e:
         print(f"\n[-] Agent Loop failed: {e}")

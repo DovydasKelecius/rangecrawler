@@ -2,7 +2,6 @@ import pytest
 from src.broker.manager import ModelManager
 from src.broker.models import AppConfig, BrokerConfig, AgentConfig, AuthConfig
 import os
-from pathlib import Path
 
 @pytest.fixture
 def mock_config(tmp_path):
