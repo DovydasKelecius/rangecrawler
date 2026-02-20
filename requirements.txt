@@ -3,7 +3,6 @@ uvicorn
 httpx
 pydantic
 PyYAML
-pytest
 sshtunnel
 paramiko
 openai
@@ -12,3 +11,8 @@ maturin
 mypy
 types-PyYAML
 types-requests
+ruff
+bandit
+safety
+pytest
+pytest-asyncio

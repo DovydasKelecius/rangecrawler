@@ -14,6 +14,7 @@ env/
 config.yaml
 rangecrawler.db
 tests/mock_env/test_config.yaml
+gemini.*
 
 # Rust artifacts
 target/
