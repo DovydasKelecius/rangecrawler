@@ -16,12 +16,13 @@ class AgentConfig(BaseModel):
     working_directory: str = "."
 
 class BrokerConfig(BaseModel):
-    host: str = "0.0.0.0"
+    host: str = "0.0.0.0"  # nosec B104
     port_assignment_url: Optional[str] = None
     default_port: int = 8000
     idle_timeout: int = 600
     check_interval: int = 60
     database_path: str = "rangecrawler.db"
+    request_timeout: float = 60.0
 
 class AuthConfig(BaseModel):
     gemini_api_key: Optional[str] = None

@@ -68,7 +68,7 @@ async def forward_to_llm_api(model_id: str, path: str, body: Dict[str, Any]):
     if config.auth.gemini_api_key:
         headers["Authorization"] = f"Bearer {config.auth.gemini_api_key}"
 
-    async with httpx.AsyncClient(timeout=None) as client:
+    async with httpx.AsyncClient(timeout=config.broker.request_timeout) as client:
         resp = await client.post(target_url, json=body, headers=headers)
         if resp.status_code != 200:
             logger.error(f"Upstream API Error ({resp.status_code}): {resp.text}")
