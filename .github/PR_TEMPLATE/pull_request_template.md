@@ -4,12 +4,15 @@
 Example: `feat: add timeline scenario editor`
 
 ### What does this PR do?
+
 <!-- 2–3 sentences max, explain the goal -->
 
 ### Related Issues
+
 <!-- Link issues: Closes #123 or Fixes #42 -->
 
 ### Type of change
+
 - [ ] Bug fix
 - [ ] New feature
 - [ ] Documentation
@@ -18,16 +21,20 @@ Example: `feat: add timeline scenario editor`
 - [ ] Other (explain):
 
 ### Testing done
+
 <!-- How did you test it? -->
+
 - [ ] Manually tested on Windows/Linux/macOS
 - [ ] Added unit/integration tests
 - [ ] Ran locally with `docker compose up`
 - [ ] No tests needed (explain why)
 
 ### Screenshots (if UI changed)
+
 <!-- Drag & drop images here -->
 
 ### Checklist
+
 - [ ] Code follows project style
 - [ ] Commit messages are clear and follow conventional commits
 - [ ] I have updated documentation (README, docs/, etc.)

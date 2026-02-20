@@ -14,10 +14,12 @@ RangeCrawler is a portable, secure brokerage system for LLM inference. it acts a
 ## Setup
 
 1. **Install Dependencies**:
+
    ```bash
    pip install -r requirements.txt
    ```
-   *Note: Ensure you have `vLLM` and `torch` installed with CUDA support.*
+
+   _Note: Ensure you have `vLLM` and `torch` installed with CUDA support._
 
 2. **Configure Models**:
    Edit `config.yaml` to define which models are allowed and set resource limits.
