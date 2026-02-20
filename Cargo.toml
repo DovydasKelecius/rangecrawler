@@ -12,5 +12,6 @@ russh = "0.57.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_yaml = "0.9.34"
 shell-escape = "0.1.5"
+sysinfo = { version = "0.38.2", features = ["windows", "multithread"] }
 tokio = { version = "1.49.0", features = ["full", "io-std"] }
 which = "8.0.0"

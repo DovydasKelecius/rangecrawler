@@ -1,67 +1,77 @@
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use russh::keys::ssh_key::rand_core::OsRng;
-use russh::keys::{Certificate, *};
+use russh::keys::*;
 use russh::server::{Msg, Server as _, Session};
 use russh::*;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio::process::Command;
+use clap::Parser;
 use russh::CryptoVec;
+use sysinfo::System;
+
+
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+    let system_facts = get_gathered_system_facts();
+    println!("{}", system_facts.long_os_name);
+    const DIVIDER: u64 = 1073741824;
+    println!("{:.2} GiB", system_facts.total_ram_in_bytes as f64 /  DIVIDER as f64);
+    
+    let key_data = fs::read_to_string(cli.private_key).map_err(|e| format!("Please provide a valid private key file: {}", e))?;
+    let private_key = PrivateKey::from_openssh(&key_data).map_err(|e| format!("Invalid host key format: {}", e))?;
+    
+
     let config = russh::server::Config {
         inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
         auth_rejection_time: std::time::Duration::from_secs(3),
         auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
-        keys: vec![
-            russh::keys::PrivateKey::random(&mut OsRng, russh::keys::Algorithm::Ed25519).unwrap(),
-        ],
-        // preferred: Preferred {
-        //     // kex: std::borrow::Cow::Owned(vec![russh::kex::DH_GEX_SHA256]),
-        //     ..Preferred::default()
-        // },
-        nodelay: true,
+        keys: vec![private_key],
         ..Default::default()
     };
+
     let config = Arc::new(config);
-    let mut sh = Server {
+    let mut sh: Server = Server {
+        system_facts: Arc::new(system_facts),
         clients: Arc::new(Mutex::new(HashMap::new())),
         id: 0,
-        buffer: String::new()
+        // buffer: String::new()
     };
 
     const ADDR: &str = "0.0.0.0";
-    const PORT: u16 = 2222;
+    let socket = TcpListener::bind((ADDR, cli.port)).await?;
 
-    match TcpListener::bind((ADDR, PORT)).await {
-        Ok(socket) => {
-            let server = sh.run_on_socket(config, &socket);
-            let handle = server.handle();
+    let server = sh.run_on_socket(config, &socket);
+    let handle = server.handle();
 
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
-                handle.shutdown("Server shutting down after 10 minutes".into());
-            });
-
-            server.await.unwrap()
-        }
-        Err(e) => {
-            eprintln!("Error: {}", e.to_string());
-        }
-    }
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+        handle.shutdown("Server shutting down after 10 minutes".into());
+    });
+    println!("Server listening on {}:{}", ADDR, cli.port);
+    server.await?;
+    
+    Ok(())
 
 }
 
 #[derive(Clone)]
 struct Server {
+    system_facts: Arc<SystemFacts>,
     clients: Arc<Mutex<HashMap<usize, (ChannelId, russh::server::Handle)>>>,
     id: usize,
-    buffer: String
+    // buffer: String
 }
 
+struct SystemFacts {
+    long_os_name: String,
+    total_ram_in_bytes: u64
+}
 
 impl server::Server for Server {
     type Handler = Self;
@@ -95,9 +105,9 @@ impl server::Handler for Server {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        println!("Shell request denied (Agent is ad-hoc only)");
+        println!("Shell request denied for channel id {}.", channel);
         session.channel_success(channel)?;
-        session.data(channel, CryptoVec::from("Error: This agent does not support interactive shells.\r\n"))?;
+        session.data(channel, CryptoVec::from("Error: Interactive shells are not supported.\r\n"))?;
         session.exit_status_request(channel, 1)?;
         session.close(channel)?;
         
@@ -106,10 +116,12 @@ impl server::Handler for Server {
 
     async fn auth_publickey(
         &mut self,
-        _: &str,
+        user: &str,
         _key: &ssh_key::PublicKey,
     ) -> Result<server::Auth, Self::Error> {
+        println!("Public key of the user \"{}\" was accepted.", user);
         Ok(server::Auth::Accept)
+        // TODO: proper allowence for admin (central point)
     }
 
     // // Inside your russh server handler
@@ -129,30 +141,17 @@ impl server::Handler for Server {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         session.channel_success(channel)?; // Acknowledge the request
-        let command_str = String::from_utf8_lossy(data);
-        let super_sercret = String::from_utf8_lossy(&data);
-        if super_sercret.contains("disk usage") {
-            println!("{:#?}", data);
-            session.data(channel, CryptoVec::from("YES YOU HAVE TRIGGERED CUSTOM FUNCTION\r\n"))?;
+        let command = std::str::from_utf8(data)?;
 
-        } else {
+        match command {
+            "disk usage" => {
+                session.data(channel, CryptoVec::from(format!("{}\r\n", self.system_facts.long_os_name)))?;
 
-            let output = tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(command_str.as_ref())
-                .output()
-                .await;
-    
-            let response = match output {
-                Ok(out) => {
-                    let mut combined = out.stdout;
-                    combined.extend(out.stderr);
-                    let text = String::from_utf8_lossy(&combined).replace("\n", "\r\n");
-                    CryptoVec::from(text.into_bytes())
-                }
-                Err(e) => CryptoVec::from(format!("Error: {}\r\n", e).into_bytes()),
-            };
-            session.data(channel, response)?;
+            }
+            _ => {
+                session.data(channel, "Error: Unauthorized command.\r\n".into())?;
+                
+            }
         }
 
 
@@ -161,35 +160,19 @@ impl server::Handler for Server {
         session.close(channel)?; 
         Ok(())
     }
-    // async fn exec_request(&mut self, channel: ChannelId, data: &[u8], session: &mut Session) -> Result<(), Self::Error> {
-    //     let command = std::str::from_utf8(data)?;
-
-    //     match command {
-    //         "disk_usage" => {
-    //             let out = std::process::Command::new("df").arg("-h").output().await?;
-    //             session.data(channel, out.stdout.into())?;
-    //         },
-    //         _ => {
-    //             // If they try "rm -rf /" or even "ls", you return an error
-    //             session.data(channel, "Error: Unknown or unauthorized command.\r\n".into())?;
-    //         }
-    //     }
-    //     session.close(channel)?;
-    //     Ok(())
-    // }
 
     async fn pty_request(
         &mut self,
         channel: ChannelId,
-        term: &str,
-        col_width: u32,
-        row_height: u32,
-        pix_width: u32,
-        pix_height: u32,
-        modes: &[(Pty, u32)],
+        _term: &str,
+        _col_width: u32,
+        _row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _modes: &[(Pty, u32)],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        session.channel_success(channel)?;
+        session.channel_success(channel)?; 
         Ok(())
     }
 
@@ -262,6 +245,17 @@ impl server::Handler for Server {
 
 }
 
+fn get_gathered_system_facts() -> SystemFacts{
+    let mut sys = System::new();
+    let long_os_name = System::long_os_version().unwrap_or_else(|| "<unknown>".to_owned());
+    sys.refresh_memory(); 
+
+    SystemFacts {
+        long_os_name: long_os_name,
+        total_ram_in_bytes: sys.total_memory()
+    }
+}
+
 impl Drop for Server {
     fn drop(&mut self) {
         let id = self.id;
@@ -271,4 +265,14 @@ impl Drop for Server {
             clients.remove(&id);
         });
     }
+}
+
+#[derive(Parser, Debug)]
+#[command(long_about = None)]
+pub struct Cli {
+    #[clap(long, short = 'P', default_value_t = 2222)]
+    port: u16,
+
+    #[clap(long, short = 'p', required = true)]
+    private_key: PathBuf,
 }
