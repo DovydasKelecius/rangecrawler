@@ -1,8 +1,8 @@
 fastapi
 uvicorn
-openai
 httpx
 pydantic
-torch
-vllm
 PyYAML
+sshtunnel
+paramiko
+sshtunnel
