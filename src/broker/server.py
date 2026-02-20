@@ -25,7 +25,7 @@ async def security_middleware(request: Request, call_next):
     if request.url.path == "/register":
         return await call_next(request)
 
-    client_ip = request.client.host
+    client_ip = request.client.host if request.client else "0.0.0.0"
     if not manager.is_allowed(client_ip):
         logger.warning(f"Unauthorized access attempt from {client_ip}")
         return JSONResponse(status_code=403, content={"detail": f"IP {client_ip} not registered."})
@@ -36,7 +36,7 @@ async def security_middleware(request: Request, call_next):
 @app.post("/register")
 async def register_ip(request: Request):
     """Manually register the calling client IP for access."""
-    client_ip = request.client.host
+    client_ip = request.client.host if request.client else "0.0.0.0"
     registered = manager.register_ip(client_ip)
     return {"status": "ok", "ip": client_ip, "new_registration": registered}
 
@@ -101,7 +101,7 @@ async def chat_completions(request: Request):
     model_id = body.get("model")
     if not model_id:
         raise HTTPException(status_code=400, detail="Missing model parameter")
-    return await forward_to_vllm(model_id, "/v1/chat/completions", body, request.client.host)
+    return await forward_to_vllm(model_id, "/v1/chat/completions", body, request.client.host if request.client else "0.0.0.0")
 
 @app.post("/v1/completions")
 async def completions(request: Request):
@@ -109,7 +109,7 @@ async def completions(request: Request):
     model_id = body.get("model")
     if not model_id:
         raise HTTPException(status_code=400, detail="Missing model parameter")
-    return await forward_to_vllm(model_id, "/v1/completions", body, request.client.host)
+    return await forward_to_vllm(model_id, "/v1/completions", body, request.client.host if request.client else "0.0.0.0")
 
 @app.get("/v1/models")
 async def list_models():

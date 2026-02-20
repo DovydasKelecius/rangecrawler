@@ -5,7 +5,7 @@ import sys
 # --- Configuration ---
 BROKER_URL = "http://127.0.0.1:8005"
 # Synchronized with config.yaml
-TARGET_MODEL = "gemini-2.0-flash" 
+TARGET_MODEL = "gemini-2.5-flash" 
 
 def run_test():
     print(f"[*] Connecting to RangeCrawler at {BROKER_URL}...")

@@ -22,7 +22,6 @@ def register_and_test():
         return
 
     # 3. Test Proxying to Gemini
-    # Updated to gemini-2.5-flash
     target_model = "gemini-2.5-flash" 
     print(f"[*] Sending request to broker for Gemini model '{target_model}'...")
     

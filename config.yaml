@@ -6,7 +6,7 @@ broker:
   check_interval: 60
 
 models:
-  - id: "gemini-2.0-flash"
+  - id: "gemini-2.5-flash"
     remote_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 logging:
