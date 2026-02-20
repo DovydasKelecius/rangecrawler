@@ -10,7 +10,7 @@ jobs:
   lint-and-fix:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # Required to push changes back
+      contents: write
     steps:
     - uses: actions/checkout@v4
       with:
@@ -46,7 +46,9 @@ jobs:
         branch: ${{ github.head_ref }}
 
     - name: Type Check with Mypy
-      run: mypy src/ --ignore-missing-imports
+      run: |
+        export PYTHONPATH=$PYTHONPATH:.
+        mypy src/ --ignore-missing-imports --explicit-package-bases
 
     - name: Security Scan (Bandit)
       run: bandit -r src/ -f json
