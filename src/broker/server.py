@@ -1,10 +1,14 @@
 import httpx
 import logging
-from fastapi import FastAPI, Request, HTTPException, Depends
+import json
+import asyncio
+from fastapi import FastAPI, Request, HTTPException, Depends, Response
 from fastapi.responses import JSONResponse, StreamingResponse
-from typing import Dict, Any
+from typing import Dict, Any, List
+from datetime import datetime
+from pathlib import Path
 
-from .manager import ModelManager
+from .manager import ModelManager, AGENT_TOOLS, LocalTools
 from .config import load_config
 
 # Initialize configuration and manager
@@ -17,107 +21,177 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
-app = FastAPI(title="RangeCrawler Reverse Proxy")
+app = FastAPI(title="RangeCrawler Reverse Proxy Agent")
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
-    """Whitelist IP check for all requests except /register."""
-    if request.url.path == "/register":
+    """Whitelist IP check for all requests except /register or /health."""
+    if request.url.path in ["/register", "/health"]:
         return await call_next(request)
 
-    client_ip = request.client.host if request.client else "0.0.0.0"
-    if not manager.is_allowed(client_ip):
+    client_ip = request.client.host if request.client else None
+    if not client_ip or not manager.is_allowed(client_ip):
         logger.warning(f"Unauthorized access attempt from {client_ip}")
         return JSONResponse(status_code=403, content={"detail": f"IP {client_ip} not registered."})
 
     response = await call_next(request)
     return response
 
+@app.get("/health")
+async def health_check():
+    """Returns the current status of the broker and its backend connectivity."""
+    return {
+        "status": "online",
+        "timestamp": datetime.now().isoformat(),
+        "database": "connected",
+        "agent_mode": config.agent.enabled
+    }
+
 @app.post("/register")
 async def register_ip(request: Request):
     """Manually register the calling client IP for access."""
-    client_ip = request.client.host if request.client else "0.0.0.0"
+    client_ip = request.client.host if request.client else None
+    if not client_ip:
+        raise HTTPException(status_code=400, detail="Unable to determine client IP")
     registered = manager.register_ip(client_ip)
     return {"status": "ok", "ip": client_ip, "new_registration": registered}
 
-async def forward_to_vllm(model_id: str, path: str, body: Dict[str, Any], client_ip: str):
-    """Transparently proxy the request to the target vLLM endpoint."""
+async def forward_to_llm_api(model_id: str, path: str, body: Dict[str, Any]):
+    """Low-level forwarder for a single turn with the remote API."""
     target_base = await manager.get_endpoint(model_id)
-    
-    # OpenAI SDK path: /v1/chat/completions
-    # Google OpenAI Base: https://.../v1beta/openai/
-    # Google expects: https://.../v1beta/openai/chat/completions
-    
     clean_path = path
-    if "googleapis.com" in target_base and path.startswith("/v1/"):
-        clean_path = path[3:] # Remove '/v1' -> '/chat/completions'
-
-    target_url = target_base.rstrip("/") + "/" + clean_path.lstrip("/")
+    if "googleapis.com" in target_base and path.startswith("/v1"):
+        clean_path = path[3:] # Remove '/v1'
     
+    target_url = target_base.rstrip("/") + "/" + clean_path.lstrip("/")
     headers = {}
-    # Google AI Studio OpenAI-compatible endpoint accepts the key as a Bearer token
     if config.auth.gemini_api_key:
         headers["Authorization"] = f"Bearer {config.auth.gemini_api_key}"
-    
-    logger.info(f"Forwarding to: {target_url} (model: {model_id})")
+
+    async with httpx.AsyncClient(timeout=None) as client:
+        resp = await client.post(target_url, json=body, headers=headers)
+        if resp.status_code != 200:
+            logger.error(f"Upstream API Error ({resp.status_code}): {resp.text}")
+            try:
+                err_data = resp.json()
+            except:
+                err_data = {"error": resp.text}
+            raise HTTPException(status_code=resp.status_code, detail=err_data)
+        return resp.json()
+
+async def execute_single_tool(func_name: str, func_args_str: str, workspace_path: Path, client_ip: str):
+    """Wrapper to execute one tool and catch errors."""
+    tool_map = {
+        "read_file": LocalTools.read_file,
+        "write_file": LocalTools.write_file,
+        "list_directory": LocalTools.list_directory,
+        "run_bash": LocalTools.run_bash
+    }
     
     try:
-        async with httpx.AsyncClient(timeout=None) as client:
-            if body.get("stream"):
-                return await _handle_streaming(client, target_url, body, headers, client_ip)
-            else:
-                resp = await client.post(target_url, json=body, headers=headers)
-                manager.track_usage(client_ip, 10) 
-                
-                try:
-                    data = resp.json()
-                    return JSONResponse(content=data, status_code=resp.status_code)
-                except:
-                    logger.error(f"Non-JSON response from {target_url}: {resp.text}")
-                    return JSONResponse(content={"error": resp.text}, status_code=resp.status_code)
-                    
+        args = json.loads(func_args_str)
+        if func_name == "get_current_directory":
+            return str(workspace_path.name)
+        elif func_name in tool_map:
+            return await tool_map[func_name](workspace_path, **args)
+        else:
+            return f"Error: Tool '{func_name}' is not supported."
     except Exception as e:
-        logger.error(f"Proxy error for model {model_id} at {target_url}: {e}")
-        raise HTTPException(status_code=502, detail=f"Target vLLM unavailable: {str(e)}")
+        return f"Error during tool execution: {str(e)}"
 
-async def _handle_streaming(client: httpx.AsyncClient, url: str, body: dict, headers: dict, client_ip: str):
-    """Proxy streaming responses chunk-by-chunk."""
-    req = client.build_request("POST", url, json=body, headers=headers)
-    resp = await client.send(req, stream=True)
+async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: str):
+    """Recursive agent loop with PARALLEL tool execution."""
     
-    async def iterate_stream():
-        try:
-            async for chunk in resp.aiter_bytes():
-                yield chunk
-        finally:
-            await resp.aclose()
-            manager.track_usage(client_ip, 50)
+    current_messages = list(messages)
+    max_iterations = config.agent.max_iterations
+    workspace_path = manager.get_workspace_path(client_ip)
+    
+    for iteration in range(max_iterations):
+        logger.info(f"Agent Loop iteration {iteration + 1}/{max_iterations}")
+        
+        body = {
+            "model": model_id,
+            "messages": current_messages,
+            "tools": AGENT_TOOLS,
+            "tool_choice": "auto"
+        }
+        
+        response_data = await forward_to_llm_api(model_id, "/v1/chat/completions", body)
+        manager.track_usage(client_ip, 100)
+        
+        choice = response_data["choices"][0]
+        message = choice["message"]
+        
+        if "tool_calls" in message and message["tool_calls"]:
+            current_messages.append(message)
             
-    return StreamingResponse(iterate_stream(), status_code=resp.status_code, media_type=resp.headers.get("content-type"))
+            # --- PARALLEL EXECUTION LOGIC ---
+            tool_calls = message["tool_calls"]
+            tasks = []
+            
+            for tool_call in tool_calls:
+                func_name = tool_call["function"]["name"]
+                func_args = tool_call["function"]["arguments"]
+                logger.info(f"Agent ({client_ip}) queueing parallel tool: {func_name}")
+                
+                tasks.append(execute_single_tool(func_name, func_args, workspace_path, client_ip))
+            
+            # Execute all tools concurrently
+            results = await asyncio.gather(*tasks)
+            
+            # Append results in order
+            for i, result in enumerate(results):
+                tool_call = tool_calls[i]
+                current_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call["id"],
+                    "name": tool_call["function"]["name"],
+                    "content": str(result)
+                })
+            
+            continue
+        else:
+            response_data["system_fingerprint"] = "fp_rangecrawler_agent_v1"
+            return response_data
+
+    raise HTTPException(status_code=504, detail="Agent loop limit reached.")
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: Request):
+async def chat_completions(request: Request, response: Response):
     body = await request.json()
     model_id = body.get("model")
+    messages = body.get("messages", [])
+    client_ip = request.client.host if request.client else None
+    if not client_ip:
+        raise HTTPException(status_code=400, detail="Unable to determine client IP")
+    
     if not model_id:
         raise HTTPException(status_code=400, detail="Missing model parameter")
-    return await forward_to_vllm(model_id, "/v1/chat/completions", body, request.client.host if request.client else "0.0.0.0")
+    
+    final_response = await agent_loop(model_id, messages, client_ip)
+    response.headers["X-RangeCrawler-Agent"] = "true"
+    
+    return final_response
 
-@app.post("/v1/completions")
-async def completions(request: Request):
-    body = await request.json()
-    model_id = body.get("model")
-    if not model_id:
-        raise HTTPException(status_code=400, detail="Missing model parameter")
-    return await forward_to_vllm(model_id, "/v1/completions", body, request.client.host if request.client else "0.0.0.0")
+@app.get("/stats")
+async def get_stats():
+    """Returns usage statistics for all registered sessions."""
+    return {
+        "total_sessions": len(manager.sessions),
+        "sessions": [
+            {
+                "ip": s.ip,
+                "token_usage": s.token_usage,
+                "last_active": s.last_active.isoformat(),
+                "uptime_seconds": (datetime.now() - s.start_time).total_seconds()
+            }
+            for s in manager.sessions.values()
+        ]
+    }
 
 @app.get("/v1/models")
 async def list_models():
-    """Returns the list of proxyable models."""
     return {
         "object": "list",
-        "data": [
-            {"id": mid, "object": "model", "owned_by": "rangecrawler"} 
-            for mid in manager.allowed_models
-        ]
+        "data": [{"id": mid, "object": "model", "owned_by": "rangecrawler"} for mid in manager.allowed_models]
     }

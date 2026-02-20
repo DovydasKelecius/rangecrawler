@@ -1,24 +1,32 @@
-# RangeCrawler Development TODO
+# RangeCrawler Agent Roadmap
 
-## Phase 1: Core Infrastructure
-- [x] Define Pydantic schemas for internal state and API communication (`src/broker/models.py`)
-- [x] Implement `ModelManager` for lifecycle management of vLLM instances (`src/broker/manager.py`)
-    - [x] Process management (subprocess.Popen)
-    - [x] Port allocation logic
-    - [x] Health checking for new instances
-    - [x] Idle unloading & GPU cache clearing
-- [x] Implement FastAPI Broker Server (`src/broker/server.py`)
-    - [x] `/v1/models` endpoint
-    - [x] `/v1/completions` proxy/routing
-    - [x] `/v1/chat/completions` proxy/routing
+## Phase 1: Core Agent Implementation (Current)
+- [ ] Implement `LocalTools` class in `manager.py` for system access.
+    - [ ] `read_file`: Read file contents.
+    - [ ] `write_file`: Overwrite file contents.
+    - [ ] `append_to_file`: Append to file contents.
+    - [ ] `list_directory`: List files in a path.
+    - [ ] `run_bash`: Execute shell commands with timeout.
+    - [ ] `get_current_directory`: Identify working directory.
+- [ ] Define OpenAI-compatible JSON schemas for all tools.
+- [ ] Implement the **Recursive Agent Loop** in `server.py`.
+    - [ ] Detect `tool_calls` in LLM response.
+    - [ ] Dispatch to local Python functions.
+    - [ ] Maintain conversation history with `tool` roles.
+    - [ ] Implement iteration limit (max 15) to prevent infinite loops.
+- [ ] Add robust error handling for tool failures (reporting back to LLM).
 
-## Phase 2: Reliability & Polishing
-- [x] Add robust error handling for vLLM startup failures
-- [x] Implement request queuing/concurrency limits per model
-- [x] Add structured logging
-- [x] Configuration management (YAML/Environment variables)
+## Phase 2: Session & Environment Management
+- [ ] **Isolated Working Directories**: Create a unique, persistent folder for each session/IP to prevent cross-contamination.
+- [ ] **Stateful Shells**: Maintain shell session state (env vars, `cd` persistence) between `run_bash` calls.
+- [ ] **Parallel Tool Execution**: Support executing multiple independent `tool_calls` in a single turn.
 
-## Phase 3: Client & Documentation
-- [x] Create example headless client (`src/agent/headless_client.py`)
-- [x] Write `requirements.txt`
-- [x] Update `README.md` with setup and usage instructions
+## Phase 3: Resource & Security Controls (Cyber Range Ready)
+- [ ] **Token Budgets**: Set per-session limits on total tokens used by the agent.
+- [ ] **Time-based Access**: Auto-expire agent sessions after a configured duration.
+- [ ] **Sandboxed Execution**: (Future) Transition `run_bash` to a Docker or Firecracker container.
+
+## Phase 4: Advanced Capabilities
+- [ ] **Streaming Support**: Implement intermediate tool result streaming to the client.
+- [ ] **File I/O via API**: Allow users to upload/download files directly to the agent's working directory.
+- [ ] **Multi-Backend Support**: Seamlessly switch between Gemini, local vLLM, and Ollama.

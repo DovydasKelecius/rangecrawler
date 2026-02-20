@@ -1,46 +1,65 @@
 import httpx
 from openai import OpenAI
 import sys
+import json
+import os
 
 # --- Configuration ---
 BROKER_URL = "http://127.0.0.1:8005"
-# Synchronized with config.yaml
 TARGET_MODEL = "gemini-2.5-flash" 
 
 def run_test():
     print(f"[*] Connecting to RangeCrawler at {BROKER_URL}...")
     
-    # 1. Register your IP (Mandatory for security)
+    # 1. Register your IP
     try:
         register_url = f"{BROKER_URL}/register"
         print(f"[*] Registering IP at {register_url}...")
         resp = httpx.post(register_url, timeout=5.0)
         if resp.status_code == 200:
-            print(f"[+] Registration successful: {resp.json()}")
+            print(f"[+] Registration successful.")
         else:
-            print(f"[-] Registration failed ({resp.status_code}): {resp.text}")
+            print(f"[-] Registration failed: {resp.text}")
             return
     except Exception as e:
         print(f"[-] Could not connect to broker: {e}")
         return
 
-    # 2. Send Test Request
-    print(f"[*] Sending test request for model '{TARGET_MODEL}'...")
-    client = OpenAI(base_url=f"{BROKER_URL}/v1", api_key="not-needed")
+    # 2. Agent Test
+    print(f"\n[*] TESTING AGENT AUTONOMY (Model: {TARGET_MODEL})")
+    
+    # Using a raw httpx request so we can see the custom headers
+    payload = {
+        "model": TARGET_MODEL,
+        "messages": [4
+            {"role": "user", "content": "List the files, read them and output to the 'agent_summary.txt', do a sentence each on what it does like /init and write 'agent_summary.txt'. Iteratie until every file is read and written about, create a todo list if needed. Done."}
+        ],
+        "stream": False
+    }
     
     try:
-        response = client.chat.completions.create(
-            model=TARGET_MODEL,
-            messages=[{"role": "user", "content": "Hello! Confirm if RangeCrawler is proxying correctly."}],
-            stream=False
-        )
-        print("\n[+] SUCCESS! Response from LLM:")
-        print("-" * 40)
-        print(response.choices[0].message.content)
-        print("-" * 40)
+        resp = httpx.post(f"{BROKER_URL}/v1/chat/completions", json=payload, timeout=60.0)
         
+        # Check custom agent headers
+        agent_header = resp.headers.get("X-RangeCrawler-Agent")
+        
+        response_data = resp.json()
+        fingerprint = response_data.get("system_fingerprint")
+        
+        print("\n[+] VERIFYING AGENT SIGNATURE:")
+        print(f"    Header 'X-RangeCrawler-Agent': {agent_header}")
+        print(f"    System Fingerprint: {fingerprint}")
+        
+        print("\n[+] FINAL AGENT RESPONSE:")
+        print("-" * 50)
+        print(response_data["choices"][0]["message"]["content"])
+        print("-" * 50)
+        
+        print(f"\n[!] Note: agent_summary.txt is INSIDE the container.")
+        print(f"    Check with: docker exec $(docker ps -q --filter ancestor=rangecrawler-broker) cat /app/agent_summary.txt")
+            
     except Exception as e:
-        print(f"\n[-] Inference failed: {e}")
+        print(f"\n[-] Agent Loop failed: {e}")
 
 if __name__ == "__main__":
     run_test()

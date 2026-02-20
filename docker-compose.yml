@@ -1,5 +1,5 @@
 services:
-  # The RangeCrawler Broker itself
+  # The RangeCrawler Broker Agent
   broker:
     build:
       context: .
@@ -7,7 +7,8 @@ services:
     ports:
       - "8005:8005"
     volumes:
-      - ./config.yaml:/app/config.yaml # Mount local config for easy testing
+      - ./config.yaml:/app/config.yaml # Only mount the config
     environment:
       - PYTHONPATH=/app
+      - GEMINI_API_KEY # Automatically pulls from your host shell environment
     command: python src/main.py --mode broker --config config.yaml

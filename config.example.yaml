@@ -1,0 +1,35 @@
+# RangeCrawler Example Configuration
+# Copy this to config.yaml and fill in your details
+
+broker:
+  host: "127.0.0.1"
+  port_assignment_url: null # Or "http://config-server/api/port"
+  default_port: 8005
+  idle_timeout: 300
+  check_interval: 60
+  database_path: "rangecrawler.db"
+
+# Agent behavior settings
+agent:
+  enabled: true
+  max_iterations: 15
+  default_timeout: 30
+  working_directory: "./agent_workspace"
+
+# Map your model IDs to remote endpoints
+models:
+  - id: "gemini-2.5-flash"
+    remote_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  - id: "gemini-2.5-pro"
+    remote_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Sensitive authentication
+# Priority:
+# 1. Environment Variable: export GEMINI_API_KEY="AIzaSy..."
+# 2. This config file (auth.gemini_api_key)
+auth:
+  gemini_api_key: "YOUR_API_KEY_HERE"
