@@ -1,7 +1,7 @@
 import httpx
 
 # --- Configuration ---
-BROKER_URL = "http://127.0.0.1:8005"
+BROKER_URL = "http://127.0.0.1:8000"
 TARGET_MODEL = "gemini-2.5-flash" 
 
 def run_test():
@@ -28,7 +28,7 @@ def run_test():
     payload = {
         "model": TARGET_MODEL,
         "messages": [
-            {"role": "user", "content": "List the files, read them and output to the 'agent_summary.txt', do a sentence each on what it does like /init and write 'agent_summary.txt'. Iteratie until every file is read and written about, create a todo list if needed. Done."}
+            {"role": "user", "content": "List the files, current OS distribution or something I can differentiate the systems by (like ip), read them and output to the 'agent_summary.txt', do a sentence each on what it does like /init and write 'agent_summary.txt'. Iteratie until every file is read and written about, create a todo list if needed. Done."}
         ],
         "stream": False
     }

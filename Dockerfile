@@ -18,5 +18,5 @@ COPY . .
 # Set Python path
 ENV PYTHONPATH="/app"
 
-# Default command
-CMD ["python", "src/main.py", "--config", "tests/mock_env/test_config.yaml"]
+# Default command to run the broker
+CMD ["python", "src/main.py", "--mode", "broker", "--config", "config.yaml"]

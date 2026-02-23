@@ -15,6 +15,7 @@ config.yaml
 rangecrawler.db
 tests/mock_env/test_config.yaml
 gemini.*
+.ruff_cache/
 
 # Rust artifacts
 target/
