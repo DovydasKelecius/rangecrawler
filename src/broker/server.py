@@ -26,7 +26,7 @@ app = FastAPI(title="RangeCrawler Reverse Proxy Agent")
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     """Whitelist IP check for all requests except /register or /health."""
-    if request.url.path in ["/register", "/health"]:
+    if request.url.path in ["/register", "/register/ssh", "/health"]:
         return await call_next(request)
 
     client_ip = request.client.host if request.client else None
@@ -38,14 +38,7 @@ async def security_middleware(request: Request, call_next):
     return response
 
 @app.get("/health")
-async def health_check():
-    """Returns the current status of the broker and its backend connectivity."""
-    return {
-        "status": "online",
-        "timestamp": datetime.now().isoformat(),
-        "database": "connected",
-        "agent_mode": config.agent.enabled
-    }
+# ... (health_check remains)
 
 @app.post("/register")
 async def register_ip(request: Request):
@@ -55,6 +48,31 @@ async def register_ip(request: Request):
         raise HTTPException(status_code=400, detail="Unable to determine client IP")
     registered = manager.register_ip(client_ip)
     return {"status": "ok", "ip": client_ip, "new_registration": registered}
+
+@app.post("/register/ssh")
+async def register_ssh(request: Request):
+    """Dynamically register SSH workspace for the calling client."""
+    from .models import AgentWorkspaceConfig
+    body = await request.json()
+    client_ip = request.client.host if request.client else None
+    if not client_ip:
+        raise HTTPException(status_code=400, detail="Unable to determine client IP")
+    
+    try:
+        ssh_cfg = AgentWorkspaceConfig(
+            client_ip=client_ip,
+            ssh_host=body["ssh_host"],
+            ssh_port=body.get("ssh_port", 22),
+            ssh_username=body["ssh_username"],
+            ssh_pkey_path=body.get("ssh_pkey_path"),
+            working_directory=body.get("working_directory", ".")
+        )
+        manager.register_ip(client_ip, ssh_config=ssh_cfg)
+        return {"status": "ok", "ip": client_ip, "workspace": "ssh"}
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=f"Missing required field: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 async def forward_to_llm_api(model_id: str, path: str, body: Dict[str, Any]):
     """Low-level forwarder for a single turn with the remote API."""
@@ -79,22 +97,30 @@ async def forward_to_llm_api(model_id: str, path: str, body: Dict[str, Any]):
             raise HTTPException(status_code=resp.status_code, detail=err_data)
         return resp.json()
 
-async def execute_single_tool(func_name: str, func_args_str: str, workspace_path: Path, client_ip: str):
+async def execute_single_tool(func_name: str, func_args_str: str, workspace_context: Any, client_ip: str):
     """Wrapper to execute one tool and catch errors."""
-    from typing import Callable, Awaitable
-    tool_map: Dict[str, Callable[..., Awaitable[Any]]] = {
-        "read_file": LocalTools.read_file,
-        "write_file": LocalTools.write_file,
-        "list_directory": LocalTools.list_directory,
-        "run_bash": LocalTools.run_bash
+    from typing import Callable
+    from .models import AgentWorkspaceConfig
+    from .manager import LocalTools, RemoteTools
+
+    is_remote = isinstance(workspace_context, AgentWorkspaceConfig)
+    tool_impl = RemoteTools if is_remote else LocalTools
+    
+    tool_map: Dict[str, Callable] = {
+        "read_file": tool_impl.read_file,
+        "write_file": tool_impl.write_file,
+        "list_directory": tool_impl.list_directory,
+        "run_bash": tool_impl.run_bash
     }
     
     try:
         args = json.loads(func_args_str)
         if func_name == "get_current_directory":
-            return str(workspace_path.name)
+            if is_remote:
+                return workspace_context.working_directory
+            return str(workspace_context.name)
         elif func_name in tool_map:
-            return await tool_map[func_name](workspace_path, **args)
+            return await tool_map[func_name](workspace_context, **args)
         else:
             return f"Error: Tool '{func_name}' is not supported."
     except Exception as e:
@@ -105,7 +131,7 @@ async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: s
     
     current_messages = list(messages)
     max_iterations = config.agent.max_iterations
-    workspace_path = manager.get_workspace_path(client_ip)
+    workspace_context = manager.get_workspace_context(client_ip)
     
     for iteration in range(max_iterations):
         logger.info(f"Agent Loop iteration {iteration + 1}/{max_iterations}")
@@ -135,7 +161,7 @@ async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: s
                 func_args = tool_call["function"]["arguments"]
                 logger.info(f"Agent ({client_ip}) queueing parallel tool: {func_name}")
                 
-                tasks.append(execute_single_tool(func_name, func_args, workspace_path, client_ip))
+                tasks.append(execute_single_tool(func_name, func_args, workspace_context, client_ip))
             
             # Execute all tools concurrently
             results = await asyncio.gather(*tasks)

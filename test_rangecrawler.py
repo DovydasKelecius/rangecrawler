@@ -2,7 +2,7 @@ import httpx
 
 # --- Configuration ---
 BROKER_URL = "http://127.0.0.1:8000"
-TARGET_MODEL = "gemini-2.5-flash" 
+TARGET_MODEL = "gemini-2.0-flash" 
 
 def run_test():
     print(f"[*] Connecting to RangeCrawler at {BROKER_URL}...")

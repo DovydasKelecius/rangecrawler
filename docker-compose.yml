@@ -5,7 +5,10 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./config.yaml:/app/config.yaml # Only mount the config
+      - ./config.yaml:/app/config.yaml
+      - ./src:/app/src
+      - ./rangecrawler.db:/app/rangecrawler.db
+      - ~/.ssh:/root/.ssh:ro # Mount local keys for SSH tools (read-only)
     environment:
       - PYTHONPATH=/app
-      - GEMINI_API_KEY # Automatically pulls from your host shell environment
+      - GEMINI_API_KEY
