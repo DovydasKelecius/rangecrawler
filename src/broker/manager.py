@@ -242,6 +242,23 @@ class ModelManager:
                 working_directory TEXT
             )
         ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS worker_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_key TEXT,
+                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS command_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_ip TEXT,
+                command TEXT,
+                status TEXT DEFAULT 'pending',
+                result TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         conn.commit()
         conn.close()
 

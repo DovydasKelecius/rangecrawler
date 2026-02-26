@@ -20,7 +20,7 @@ class RangeCrawlerAgent:
         # If broker is on localhost, we are likely the host talking to a docker container.
         # We should tell the broker to connect back to the Docker Gateway IP.
         if "127.0.0.1" in self.broker_url or "localhost" in self.broker_url:
-            return "172.17.0.1" # Default Docker Bridge Gateway
+            return "127.0.0.1" 
 
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -32,6 +32,27 @@ class RangeCrawlerAgent:
         finally:
             s.close()
         return ip
+
+    def authorize_worker(self, public_key: str):
+        """Add the worker's public key to authorized_keys."""
+        if not public_key:
+            return
+        
+        auth_keys_path = os.path.expanduser("~/.ssh/authorized_keys")
+        os.makedirs(os.path.dirname(auth_keys_path), exist_ok=True)
+        
+        # Check if already exists
+        if os.path.exists(auth_keys_path):
+            with open(auth_keys_path, "r") as f:
+                if public_key in f.read():
+                    print("[*] Worker key already authorized.")
+                    return
+        
+        with open(auth_keys_path, "a") as f:
+            f.write(f"\n{public_key}\n")
+        
+        os.chmod(auth_keys_path, 0o600)
+        print("[+] Automatically authorized worker public key.")
 
     def register_self(self, ssh_port: int = 22, pkey_path: str = None):
         """Register this machine as a remote workspace on the broker."""
@@ -49,8 +70,15 @@ class RangeCrawlerAgent:
         try:
             resp = httpx.post(f"{self.broker_url}/register/ssh", json=payload, timeout=10.0)
             if resp.status_code == 200:
+                data = resp.json()
                 print(f"[+] Successfully registered with broker at {self.broker_url}")
                 print(f"[+] Workspace set to: {self.working_dir}")
+                
+                # Handle automatic key authorization
+                worker_key = data.get("worker_public_key")
+                if worker_key:
+                    self.authorize_worker(worker_key)
+                
                 return True
             else:
                 print(f"[-] Registration failed: {resp.text}")
