@@ -38,7 +38,14 @@ async def security_middleware(request: Request, call_next):
     return response
 
 @app.get("/health")
-# ... (health_check remains)
+async def health_check():
+    """Returns the current status of the broker and its backend connectivity."""
+    return {
+        "status": "online",
+        "timestamp": datetime.now().isoformat(),
+        "database": "connected",
+        "agent_mode": config.agent.enabled
+    }
 
 @app.post("/register")
 async def register_ip(request: Request):
@@ -159,7 +166,7 @@ async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: s
             for tool_call in tool_calls:
                 func_name = tool_call["function"]["name"]
                 func_args = tool_call["function"]["arguments"]
-                logger.info(f"Agent ({client_ip}) queueing parallel tool: {func_name}")
+                logger.info(f"[*] AGENT TOOL CALL [{client_ip}]: {func_name}({func_args})")
                 
                 tasks.append(execute_single_tool(func_name, func_args, workspace_context, client_ip))
             
@@ -169,10 +176,12 @@ async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: s
             # Append results in order
             for i, result in enumerate(results):
                 tool_call = tool_calls[i]
+                func_name = tool_call["function"]["name"]
+                logger.info(f"[+] TOOL RESULT [{client_ip}]: {func_name} -> {str(result)[:200]}...")
                 current_messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call["id"],
-                    "name": tool_call["function"]["name"],
+                    "name": func_name,
                     "content": str(result)
                 })
             

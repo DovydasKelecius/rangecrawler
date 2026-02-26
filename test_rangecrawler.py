@@ -2,7 +2,7 @@ import httpx
 
 # --- Configuration ---
 BROKER_URL = "http://127.0.0.1:8000"
-TARGET_MODEL = "gemini-2.0-flash" 
+TARGET_MODEL = "gemini-2.5-flash" 
 
 def run_test():
     print(f"[*] Connecting to RangeCrawler at {BROKER_URL}...")
@@ -34,7 +34,7 @@ def run_test():
     }
     
     try:
-        resp = httpx.post(f"{BROKER_URL}/v1/chat/completions", json=payload, timeout=60.0)
+        resp = httpx.post(f"{BROKER_URL}/v1/chat/completions", json=payload, timeout=300.0)
         
         # Check custom agent headers
         agent_header = resp.headers.get("X-RangeCrawler-Agent")

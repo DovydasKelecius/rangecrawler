@@ -17,6 +17,11 @@ class RangeCrawlerAgent:
         
     def get_local_ip(self):
         """Try to find the IP address that can reach the broker."""
+        # If broker is on localhost, we are likely the host talking to a docker container.
+        # We should tell the broker to connect back to the Docker Gateway IP.
+        if "127.0.0.1" in self.broker_url or "localhost" in self.broker_url:
+            return "172.17.0.1" # Default Docker Bridge Gateway
+
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             # Doesn't even have to be reachable
