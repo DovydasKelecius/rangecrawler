@@ -3,7 +3,6 @@ import paramiko
 import time
 import os
 import logging
-import socket
 import json
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - WORKER - %(message)s")
@@ -80,7 +79,7 @@ def process_generation_request(client_config, model="llama3"):
     if os.path.exists(default_key):
         try:
             pkey = paramiko.RSAKey.from_private_key_file(default_key)
-        except:
+        except Exception:
             pass
 
     try:
@@ -139,7 +138,7 @@ def execute_remote_command(client_config, command_id, command):
     if os.path.exists(default_key):
         try:
             pkey = paramiko.RSAKey.from_private_key_file(default_key)
-        except:
+        except Exception:
             pass
 
     try:

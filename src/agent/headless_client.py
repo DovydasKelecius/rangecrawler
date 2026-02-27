@@ -5,7 +5,6 @@ import platform
 import getpass
 import argparse
 import time
-from pathlib import Path
 
 class RangeCrawlerAgent:
     def __init__(self, broker_url: str, working_dir: str = None, username: str = None):
@@ -98,7 +97,7 @@ class RangeCrawlerAgent:
         while True:
             try:
                 httpx.post(f"{self.broker_url}/register", timeout=5.0)
-            except:
+            except Exception:
                 pass
             time.sleep(interval)
 

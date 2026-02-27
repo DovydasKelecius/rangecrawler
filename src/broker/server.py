@@ -7,7 +7,6 @@ from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, List
 from datetime import datetime
-from pathlib import Path
 
 from .manager import ModelManager, AGENT_TOOLS, LocalTools
 from .config import load_config
@@ -209,7 +208,7 @@ async def execute_single_tool(func_name: str, func_args_str: str, workspace_cont
     """Wrapper to execute one tool and catch errors."""
     from typing import Callable
     from .models import AgentWorkspaceConfig
-    from .manager import LocalTools, RemoteTools
+    from .manager import RemoteTools
 
     is_remote = isinstance(workspace_context, AgentWorkspaceConfig)
     tool_impl = RemoteTools if is_remote else LocalTools

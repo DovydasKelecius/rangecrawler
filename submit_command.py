@@ -1,6 +1,5 @@
 import httpx
 import argparse
-import sys
 import time
 
 def main():
