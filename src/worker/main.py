@@ -1,5 +1,5 @@
 import httpx
-import paramiko
+import paramiko  # type: ignore[import-untyped]
 import time
 import os
 import logging

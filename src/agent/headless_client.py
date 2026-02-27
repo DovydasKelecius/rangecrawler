@@ -5,9 +5,10 @@ import platform
 import getpass
 import argparse
 import time
+from typing import Optional
 
 class RangeCrawlerAgent:
-    def __init__(self, broker_url: str, working_dir: str = None, username: str = None):
+    def __init__(self, broker_url: str, working_dir: Optional[str] = None, username: Optional[str] = None):
         self.broker_url = broker_url.rstrip("/")
         self.working_dir = working_dir or os.getcwd()
         self.username = username or getpass.getuser()
@@ -58,7 +59,7 @@ class RangeCrawlerAgent:
         os.chmod(auth_keys_path, 0o600)
         print(f"[+] Automatically authorized worker public key for user {self.username}.")
 
-    def register_self(self, ssh_port: int = 22, pkey_path: str = None):
+    def register_self(self, ssh_port: int = 22, pkey_path: Optional[str] = None):
         """Register this machine as a remote workspace on the broker."""
         local_ip = self.get_local_ip()
         print(f"[*] Identifying as {self.username}@{local_ip} ({self.os_info})")

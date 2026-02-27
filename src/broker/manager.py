@@ -3,12 +3,12 @@ import logging
 import os
 import json
 import sqlite3
-import paramiko
+import paramiko  # type: ignore[import-untyped]
 from datetime import datetime
 from typing import Dict, Union, Optional
 from pathlib import Path
 from urllib.parse import urlparse
-from sshtunnel import SSHTunnelForwarder
+from sshtunnel import SSHTunnelForwarder # type: ignore[import-untyped]
 
 from .models import AppConfig, ModelConfig, SessionStats, AgentWorkspaceConfig
 
