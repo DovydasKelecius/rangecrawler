@@ -12,6 +12,8 @@ from sshtunnel import SSHTunnelForwarder # type: ignore[import-untyped]
 
 from .models import AppConfig, ModelConfig, SessionStats, AgentWorkspaceConfig
 
+logger = logging.getLogger(__name__)
+
 # --- OpenAI-Compatible Tool Definitions ---
 AGENT_TOOLS = [
     {
@@ -142,18 +144,37 @@ class RemoteTools:
     @staticmethod
     def _get_ssh_client(config: AgentWorkspaceConfig) -> paramiko.SSHClient:
         ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        # Strict policy: fail on unknown or changed host keys (recommended for security)
+        ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+        
+        # Optional: load system known_hosts file (usually ~/.ssh/known_hosts)
+        ssh.load_system_host_keys()
+        
+        # Optional: load custom known_hosts if you have one in the project or config
+        # ssh.load_host_keys(os.path.expanduser("~/.ssh/known_hosts_custom"))
+        
         pkey = None
         if config.ssh_pkey_path:
-            pkey = paramiko.RSAKey.from_private_key_file(os.path.expanduser(config.ssh_pkey_path))
-        ssh.connect(
-            hostname=config.ssh_host,
-            port=config.ssh_port,
-            username=config.ssh_username,
-            pkey=pkey,
-            timeout=10
-        )
-        return ssh
+            try:
+                pkey = paramiko.RSAKey.from_private_key_file(os.path.expanduser(config.ssh_pkey_path))
+            except Exception as e:
+                logger.error(f"Failed to load private key from {config.ssh_pkey_path}: {e}")
+                raise
+        
+        try:
+            ssh.connect(
+                hostname=config.ssh_host,
+                port=config.ssh_port,
+                username=config.ssh_username,
+                pkey=pkey,
+                timeout=10
+            )
+            logger.info(f"SSH connection established to {config.ssh_host}:{config.ssh_port}")
+            return ssh
+        except paramiko.SSHException as e:
+            logger.error(f"SSH connection failed to {config.ssh_host}: {e}")
+            raise
 
     @staticmethod
     async def read_file(config: AgentWorkspaceConfig, path: str) -> str:

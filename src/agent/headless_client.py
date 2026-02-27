@@ -1,3 +1,4 @@
+import logging
 import httpx
 import socket
 import os
@@ -6,6 +7,8 @@ import getpass
 import argparse
 import time
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 class RangeCrawlerAgent:
     def __init__(self, broker_url: str, working_dir: Optional[str] = None, username: Optional[str] = None):
@@ -98,8 +101,8 @@ class RangeCrawlerAgent:
         while True:
             try:
                 httpx.post(f"{self.broker_url}/register", timeout=5.0)
-            except Exception:
-                pass
+            except Exception as e: 
+                logger.warning(f"Registration failed: {e}")
             time.sleep(interval)
 
 def main():
