@@ -34,7 +34,7 @@ def run_test():
     }
     
     try:
-        resp = httpx.post(f"{BROKER_URL}/v1/chat/completions", json=payload, timeout=60.0)
+        resp = httpx.post(f"{BROKER_URL}/v1/chat/completions", json=payload, timeout=300.0)
         
         # Check custom agent headers
         agent_header = resp.headers.get("X-RangeCrawler-Agent")

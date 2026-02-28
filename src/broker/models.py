@@ -9,11 +9,20 @@ class ModelConfig(BaseModel):
     ssh_username: Optional[str] = None
     ssh_pkey_path: Optional[str] = None
 
+class AgentWorkspaceConfig(BaseModel):
+    client_ip: str
+    ssh_host: str
+    ssh_port: int = 22
+    ssh_username: str
+    ssh_pkey_path: Optional[str] = None
+    working_directory: str = "."
+
 class AgentConfig(BaseModel):
     enabled: bool = True
     max_iterations: int = 15
     default_timeout: int = 30
     working_directory: str = "."
+    workspaces: List[AgentWorkspaceConfig] = Field(default_factory=list)
 
 class BrokerConfig(BaseModel):
     host: str = "0.0.0.0"  # nosec B104

@@ -1,11 +1,26 @@
 services:
-  # The RangeCrawler Broker Agent
+  # The RangeCrawler Broker (Registry)
   broker:
     build: .
     ports:
       - "8000:8000"
     volumes:
-      - ./config.yaml:/app/config.yaml # Only mount the config
+      - ./config.yaml:/app/config.yaml
+      - ./src:/app/src
+      - ./rangecrawler.db:/app/rangecrawler.db
     environment:
       - PYTHONPATH=/app
-      - GEMINI_API_KEY # Automatically pulls from your host shell environment
+      - GEMINI_API_KEY
+
+  # The Ollama Worker (Orchestrator)
+  worker:
+    build: .
+    command: ["python", "src/worker/main.py"]
+    network_mode: host # Use host network to reach SSH on localhost easily
+    volumes:
+      - ./src:/app/src
+      - ~/.ssh:/root/.ssh:ro
+    environment:
+      - PYTHONPATH=/app
+      - BROKER_URL=http://localhost:8000
+      - OLLAMA_URL=http://localhost:11434

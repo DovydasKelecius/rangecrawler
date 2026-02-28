@@ -2,11 +2,11 @@ import httpx
 import logging
 import json
 import asyncio
+import sqlite3
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, List
 from datetime import datetime
-from pathlib import Path
 
 from .manager import ModelManager, AGENT_TOOLS, LocalTools
 from .config import load_config
@@ -25,8 +25,13 @@ app = FastAPI(title="RangeCrawler Reverse Proxy Agent")
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
-    """Whitelist IP check for all requests except /register or /health."""
-    if request.url.path in ["/register", "/health"]:
+    """Whitelist IP check for all requests except registration, clients, workers, and commands."""
+    open_paths = [
+        "/register", "/register/ssh", "/clients", 
+        "/worker/register", "/health", "/command/submit", 
+        "/command/pending", "/command/result", "/command/status"
+    ]
+    if any(request.url.path.startswith(p) for p in open_paths):
         return await call_next(request)
 
     client_ip = request.client.host if request.client else None
@@ -56,6 +61,126 @@ async def register_ip(request: Request):
     registered = manager.register_ip(client_ip)
     return {"status": "ok", "ip": client_ip, "new_registration": registered}
 
+@app.post("/register/ssh")
+async def register_ssh(request: Request):
+    """Dynamically register SSH workspace for the calling client."""
+    from .models import AgentWorkspaceConfig
+    body = await request.json()
+    client_ip = request.client.host if request.client else None
+    if not client_ip:
+        raise HTTPException(status_code=400, detail="Unable to determine client IP")
+    
+    try:
+        ssh_cfg = AgentWorkspaceConfig(
+            client_ip=client_ip,
+            ssh_host=body["ssh_host"],
+            ssh_port=body.get("ssh_port", 22),
+            ssh_username=body["ssh_username"],
+            ssh_pkey_path=body.get("ssh_pkey_path"),
+            working_directory=body.get("working_directory", ".")
+        )
+        manager.register_ip(client_ip, ssh_config=ssh_cfg)
+        
+        # Return the latest worker public key to the client for automatic authorization
+        conn = sqlite3.connect(manager.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT public_key FROM worker_keys ORDER BY last_seen DESC LIMIT 1")
+        row = cursor.fetchone()
+        conn.close()
+        
+        worker_key = row[0] if row else None
+        
+        return {
+            "status": "ok", 
+            "ip": client_ip, 
+            "workspace": "ssh",
+            "worker_public_key": worker_key
+        }
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=f"Missing required field: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/worker/register")
+async def register_worker(request: Request):
+    """Register a worker's public key."""
+    body = await request.json()
+    public_key = body.get("public_key")
+    if not public_key:
+        raise HTTPException(status_code=400, detail="Missing public_key")
+    
+    conn = sqlite3.connect(manager.db_path)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO worker_keys (public_key) VALUES (?)", (public_key,))
+    conn.commit()
+    conn.close()
+    
+    return {"status": "ok", "message": "Worker public key registered"}
+
+@app.post("/command/submit")
+async def submit_command(request: Request):
+    """Submit a command to be executed on a specific client."""
+    body = await request.json()
+    client_ip = body.get("client_ip")
+    command = body.get("command")
+    
+    if not client_ip or not command:
+        raise HTTPException(status_code=400, detail="Missing client_ip or command")
+    
+    conn = sqlite3.connect(manager.db_path)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO command_queue (client_ip, command) VALUES (?, ?)", (client_ip, command))
+    command_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    
+    return {"status": "ok", "command_id": command_id}
+
+@app.get("/command/pending/{client_ip}")
+async def get_pending_commands(client_ip: str):
+    """Fetch pending commands for a specific client."""
+    conn = sqlite3.connect(manager.db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, command FROM command_queue WHERE client_ip = ? AND status = 'pending'", (client_ip,))
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return {"commands": [{"id": r[0], "command": r[1]} for r in rows]}
+
+@app.post("/command/result")
+async def post_command_result(request: Request):
+    """Submit the result of an executed command."""
+    body = await request.json()
+    command_id = body.get("command_id")
+    result = body.get("result")
+    
+    conn = sqlite3.connect(manager.db_path)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE command_queue SET status = 'completed', result = ? WHERE id = ?", (result, command_id))
+    conn.commit()
+    conn.close()
+    
+    return {"status": "ok"}
+
+@app.get("/command/status/{command_id}")
+async def get_command_status(command_id: int):
+    """Get the status and result of a specific command."""
+    conn = sqlite3.connect(manager.db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT status, result, command FROM command_queue WHERE id = ?", (command_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="Command not found")
+    
+    return {
+        "id": command_id,
+        "status": row[0],
+        "result": row[1],
+        "command": row[2]
+    }
+
 async def forward_to_llm_api(model_id: str, path: str, body: Dict[str, Any]):
     """Low-level forwarder for a single turn with the remote API."""
     target_base = await manager.get_endpoint(model_id)
@@ -79,22 +204,30 @@ async def forward_to_llm_api(model_id: str, path: str, body: Dict[str, Any]):
             raise HTTPException(status_code=resp.status_code, detail=err_data)
         return resp.json()
 
-async def execute_single_tool(func_name: str, func_args_str: str, workspace_path: Path, client_ip: str):
+async def execute_single_tool(func_name: str, func_args_str: str, workspace_context: Any, client_ip: str):
     """Wrapper to execute one tool and catch errors."""
-    from typing import Callable, Awaitable
-    tool_map: Dict[str, Callable[..., Awaitable[Any]]] = {
-        "read_file": LocalTools.read_file,
-        "write_file": LocalTools.write_file,
-        "list_directory": LocalTools.list_directory,
-        "run_bash": LocalTools.run_bash
+    from typing import Callable
+    from .models import AgentWorkspaceConfig
+    from .manager import RemoteTools
+
+    is_remote = isinstance(workspace_context, AgentWorkspaceConfig)
+    tool_impl = RemoteTools if is_remote else LocalTools
+    
+    tool_map: Dict[str, Callable] = {
+        "read_file": tool_impl.read_file,
+        "write_file": tool_impl.write_file,
+        "list_directory": tool_impl.list_directory,
+        "run_bash": tool_impl.run_bash
     }
     
     try:
         args = json.loads(func_args_str)
         if func_name == "get_current_directory":
-            return str(workspace_path.name)
+            if is_remote:
+                return workspace_context.working_directory
+            return str(workspace_context.name)
         elif func_name in tool_map:
-            return await tool_map[func_name](workspace_path, **args)
+            return await tool_map[func_name](workspace_context, **args)
         else:
             return f"Error: Tool '{func_name}' is not supported."
     except Exception as e:
@@ -105,7 +238,7 @@ async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: s
     
     current_messages = list(messages)
     max_iterations = config.agent.max_iterations
-    workspace_path = manager.get_workspace_path(client_ip)
+    workspace_context = manager.get_workspace_context(client_ip)
     
     for iteration in range(max_iterations):
         logger.info(f"Agent Loop iteration {iteration + 1}/{max_iterations}")
@@ -133,9 +266,9 @@ async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: s
             for tool_call in tool_calls:
                 func_name = tool_call["function"]["name"]
                 func_args = tool_call["function"]["arguments"]
-                logger.info(f"Agent ({client_ip}) queueing parallel tool: {func_name}")
+                logger.info(f"[*] AGENT TOOL CALL [{client_ip}]: {func_name}({func_args})")
                 
-                tasks.append(execute_single_tool(func_name, func_args, workspace_path, client_ip))
+                tasks.append(execute_single_tool(func_name, func_args, workspace_context, client_ip))
             
             # Execute all tools concurrently
             results = await asyncio.gather(*tasks)
@@ -143,10 +276,12 @@ async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: s
             # Append results in order
             for i, result in enumerate(results):
                 tool_call = tool_calls[i]
+                func_name = tool_call["function"]["name"]
+                logger.info(f"[+] TOOL RESULT [{client_ip}]: {func_name} -> {str(result)[:200]}...")
                 current_messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call["id"],
-                    "name": tool_call["function"]["name"],
+                    "name": func_name,
                     "content": str(result)
                 })
             
@@ -173,6 +308,27 @@ async def chat_completions(request: Request, response: Response):
     response.headers["X-RangeCrawler-Agent"] = "true"
     
     return final_response
+
+@app.get("/clients")
+async def list_clients():
+    """Returns a list of all registered clients for the worker to poll."""
+    conn = sqlite3.connect(manager.db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT ip, ssh_host, ssh_port, ssh_username, ssh_pkey_path, working_directory FROM allowed_ips WHERE ssh_host IS NOT NULL")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    clients = []
+    for row in rows:
+        clients.append({
+            "ip": row[0],
+            "ssh_host": row[1],
+            "ssh_port": row[2],
+            "ssh_username": row[3],
+            "ssh_pkey_path": row[4],
+            "working_directory": row[5]
+        })
+    return {"clients": clients}
 
 @app.get("/stats")
 async def get_stats():

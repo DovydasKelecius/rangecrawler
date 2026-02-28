@@ -16,6 +16,10 @@ rangecrawler.db
 tests/mock_env/test_config.yaml
 gemini.*
 .ruff_cache/
+.mypy_cache/
+.pytest_cache/
+coverage.xml
+agent_testclient/
 
 # Rust artifacts
 target/

@@ -15,6 +15,14 @@ agent:
   max_iterations: 15
   default_timeout: 30
   working_directory: "./agent_workspace"
+  # Optional: Map client IPs to remote SSH workspaces
+  workspaces:
+    - client_ip: "127.0.0.1" # Example for local testing if running broker elsewhere
+      ssh_host: "your.local.pc.ip"
+      ssh_port: 22
+      ssh_username: "kedo"
+      ssh_pkey_path: "~/.ssh/id_rsa"
+      working_directory: "/home/kedo/workspace"
 
 # Map your model IDs to remote endpoints
 models:
