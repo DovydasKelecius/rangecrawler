@@ -2,7 +2,17 @@ services:
   # The RangeCrawler Broker (Registry)
   broker:
     build: .
-    command: ["python", "-m", "src.main", "broker", "--host", "0.0.0.0", "--port", "8000"]
+    command:
+      [
+        "python",
+        "-m",
+        "src.main",
+        "broker",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+      ]
     profiles: ["broker", "all"]
     ports:
       - "8000:8000"
