@@ -18,11 +18,39 @@ class RangeCrawlerAgent:
         self.hostname = socket.gethostname()
         self.os_info = f"{platform.system()} {platform.release()}"
         
+    def get_ssh_host_key(self) -> Optional[str]:
+        """Read the local SSH host public key."""
+        # Common locations for host keys, prioritized by modern standards
+        key_paths = [
+            "/etc/ssh/ssh_host_ed25519_key.pub",
+            "/etc/ssh/ssh_host_rsa_key.pub",
+            "/etc/ssh/ssh_host_ecdsa_key.pub"
+        ]
+        for path in key_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, "r") as f:
+                        return f.read().strip()
+                except Exception as e:
+                    logger.debug(f"Failed to read host key from {path}: {e}")
+        return None
+
     def get_local_ip(self):
         """Try to find the IP address that can reach the broker."""
         # If broker is on localhost, we are likely the host talking to a docker container.
         # We should tell the broker to connect back to the Docker Gateway IP.
         if "127.0.0.1" in self.broker_url or "localhost" in self.broker_url:
+            # Try to find the gateway IP of the network we are actually using
+            try:
+                import subprocess
+                # Look for the IP address on the bridge interface that routes to the broker
+                # This is more robust than grep docker0
+                cmd = r"ip route get 1.1.1.1 | grep -oP 'src \K\S+'"
+                res = subprocess.check_output(cmd, shell=True).decode().strip()
+                if res and res.startswith("172."):
+                    return res
+            except Exception:
+                pass
             return "172.18.0.1" 
 
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -65,6 +93,7 @@ class RangeCrawlerAgent:
     def register_self(self, ssh_port: int = 22, pkey_path: Optional[str] = None):
         """Register this machine as a remote workspace on the broker."""
         local_ip = self.get_local_ip()
+        host_key = self.get_ssh_host_key()
         print(f"[*] Identifying as {self.username}@{local_ip} ({self.os_info})")
         
         payload = {
@@ -72,6 +101,7 @@ class RangeCrawlerAgent:
             "ssh_port": ssh_port,
             "ssh_username": self.username,
             "ssh_pkey_path": pkey_path,
+            "ssh_host_key": host_key,
             "working_directory": self.working_dir
         }
         
@@ -105,6 +135,21 @@ class RangeCrawlerAgent:
                 logger.warning(f"Registration failed: {e}")
             time.sleep(interval)
 
+def run_agent(broker: str, working_dir: Optional[str] = None, user: Optional[str] = None, ssh_port: int = 22, pkey: Optional[str] = None, heartbeat: bool = False):
+    """Entry point for the RangeCrawler agent."""
+    agent = RangeCrawlerAgent(broker, working_dir, username=user)
+    
+    # 1. Self-Register
+    if agent.register_self(ssh_port=ssh_port, pkey_path=pkey):
+        # 2. If successful and heartbeat requested, stay alive
+        if heartbeat:
+            agent.run_heartbeat()
+        else:
+            print("[+] Done. Broker is now configured to use this machine.")
+            return True
+    else:
+        return False
+
 def main():
     parser = argparse.ArgumentParser(description="RangeCrawler Autonomous Agent")
     parser.add_argument("--broker", type=str, default="http://localhost:8000", help="URL of the RangeCrawler broker")
@@ -116,16 +161,15 @@ def main():
     
     args = parser.parse_args()
 
-    agent = RangeCrawlerAgent(args.broker, args.dir, username=args.user)
-    
-    # 1. Self-Register
-    if agent.register_self(ssh_port=args.ssh_port, pkey_path=args.pkey):
-        # 2. If successful and heartbeat requested, stay alive
-        if args.heartbeat:
-            agent.run_heartbeat()
-        else:
-            print("[+] Done. Broker is now configured to use this machine.")
-    else:
+    success = run_agent(
+        broker=args.broker,
+        working_dir=args.dir,
+        user=args.user,
+        ssh_port=args.ssh_port,
+        pkey=args.pkey,
+        heartbeat=args.heartbeat
+    )
+    if not success:
         exit(1)
 
 if __name__ == "__main__":

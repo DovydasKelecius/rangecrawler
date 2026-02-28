@@ -5,7 +5,7 @@ import os
 import logging
 import json
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - WORKER - %(message)s")
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - WORKER - %(message)s")
 logger = logging.getLogger("OllamaWorker")
 
 BROKER_URL = os.getenv("BROKER_URL", "http://localhost:8000")
@@ -42,6 +42,35 @@ def push_context(ssh, remote_path, context):
     finally:
         sftp.close()
 
+def setup_host_key(ssh, host, host_key):
+    """Add a host key to the SSH client's in-memory store."""
+    if not host_key:
+        logger.debug(f"No host key provided for {host}")
+        return
+    
+    try:
+        parts = host_key.split()
+        if len(parts) >= 2:
+            key_type = parts[0]
+            key_str = parts[1]
+            import base64
+            key_bytes = base64.b64decode(key_str)
+            
+            key = None
+            if key_type == "ssh-rsa":
+                key = paramiko.RSAKey(data=key_bytes)
+            elif key_type == "ssh-ed25519":
+                key = paramiko.Ed25519Key(data=key_bytes)
+            elif key_type.startswith("ecdsa-sha2-"):
+                key = paramiko.ECDSAKey(data=key_bytes)
+            
+            if key:
+                # Add to in-memory store. This satisfies RejectPolicy for this session.
+                ssh.get_host_keys().add(host, key_type, key)
+                logger.info(f"Loaded host key for {host} into memory ({key_type})")
+    except Exception as e:
+        logger.warning(f"Failed to load host key for {host}: {e}")
+
 def call_ollama(model, messages):
     """Call the Ollama API for generation."""
     logger.info(f"Calling Ollama model {model}...")
@@ -66,6 +95,9 @@ def call_ollama(model, messages):
 
 def process_generation_request(client_config, model="llama3"):
     """Full cycle: Connect -> Sync Context -> Generate -> Push Context."""
+    if not client_config:
+        logger.error("process_generation_request called with None client_config")
+        return
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
     ssh.load_system_host_keys()
@@ -74,6 +106,9 @@ def process_generation_request(client_config, model="llama3"):
     ssh_user = client_config["ssh_username"]
     ssh_port = client_config.get("ssh_port", 22)
     remote_path = client_config.get("working_directory", ".")
+    host_key = client_config.get("ssh_host_key")
+    
+    setup_host_key(ssh, ssh_host, host_key)
     
     default_key = "/root/.ssh/id_rsa"
     pkey = None
@@ -128,6 +163,9 @@ def process_generation_request(client_config, model="llama3"):
 
 def execute_remote_command(client_config, command_id, command):
     """Execute a specific command via SSH and report results."""
+    if not client_config:
+        logger.error(f"execute_remote_command called with None client_config for command {command_id}")
+        return False
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
     ssh.load_system_host_keys()
@@ -136,6 +174,9 @@ def execute_remote_command(client_config, command_id, command):
     ssh_host = client_config["ssh_host"]
     ssh_user = client_config["ssh_username"]
     ssh_port = client_config.get("ssh_port", 22)
+    host_key = client_config.get("ssh_host_key")
+    
+    setup_host_key(ssh, ssh_host, host_key)
     
     default_key = "/root/.ssh/id_rsa"
     if os.path.exists(default_key):
@@ -209,24 +250,37 @@ def worker_loop():
                 clients = resp.json().get("clients", [])
                 if not clients:
                     logger.debug("No clients registered.")
+                    continue
                 
                 for client in clients:
+                    logger.debug(f"STEP 1: client={client}")
+                    if client is None:
+                        continue
                     client_ip = client["ip"]
+                    logger.debug(f"STEP 2: client_ip={client_ip}")
+                    
                     # 2. Check for pending commands
                     cmd_resp = httpx.get(f"{BROKER_URL}/command/pending/{client_ip}", timeout=10.0)
+                    logger.debug(f"STEP 3: cmd_resp status={cmd_resp.status_code}")
                     if cmd_resp.status_code == 200:
-                        cmds = cmd_resp.json().get("commands", [])
+                        cmds_data = cmd_resp.json()
+                        logger.debug(f"STEP 4: cmds_data={cmds_data}")
+                        cmds = cmds_data.get("commands", [])
                         if cmds:
                             logger.info(f"Found {len(cmds)} pending commands for {client_ip}")
                         for cmd in cmds:
+                            logger.debug(f"STEP 5: cmd={cmd}")
                             execute_remote_command(client, cmd["id"], cmd["command"])
                     
                     # 3. Check for generation (Context Sync Loop)
+                    logger.debug("STEP 6: calling process_generation_request")
                     process_generation_request(client)
             else:
                 logger.error(f"Broker error: {resp.status_code}")
         except Exception as e:
+            import traceback
             logger.error(f"Worker Loop Error: {e}")
+            logger.error(traceback.format_exc())
         
         time.sleep(5)
 
