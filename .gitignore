@@ -19,6 +19,7 @@ gemini.*
 .mypy_cache/
 .pytest_cache/
 coverage.xml
+agent_testclient/
 
 # Rust artifacts
 target/

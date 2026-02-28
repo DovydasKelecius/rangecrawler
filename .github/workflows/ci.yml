@@ -48,13 +48,13 @@ jobs:
     - name: Type Check with Mypy
       run: |
         export PYTHONPATH=$PYTHONPATH:.
-        mypy src/ --ignore-missing-imports --explicit-package-bases
+        mypy src/
 
     - name: Security Scan (Bandit)
-      run: bandit -r src/ -f json
+      run: bandit -r src/
 
     - name: Check Dependencies (Safety)
-      run: safety check
+      run: safety scan
 
     - name: Run Unit Tests
       run: |
@@ -71,7 +71,7 @@ jobs:
       uses: docker/setup-buildx-action@v2
 
     - name: Build Docker Image
-      run: docker build -t rangecrawler-broker:latest -f tests/mock_env/Dockerfile .
+      run: docker build -t rangecrawler-broker:latest .
 
     - name: Container Security Scan (Trivy)
       uses: aquasecurity/trivy-action@master
