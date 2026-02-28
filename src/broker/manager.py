@@ -152,8 +152,31 @@ class RemoteTools:
         # Optional: load system known_hosts file (usually ~/.ssh/known_hosts)
         ssh.load_system_host_keys()
         
-        # Optional: load custom known_hosts if you have one in the project or config
-        # ssh.load_host_keys(os.path.expanduser("~/.ssh/known_hosts_custom"))
+        # Add host key if we have it
+        if config.ssh_host_key:
+            try:
+                # Basic parsing: 'ssh-rsa AAAAB3Nza...'
+                parts = config.ssh_host_key.split()
+                if len(parts) >= 2:
+                    key_type = parts[0]
+                    key_str = parts[1]
+                    
+                    import base64
+                    key_bytes = base64.b64decode(key_str)
+                    
+                    if key_type == "ssh-rsa":
+                        key = paramiko.RSAKey(data=key_bytes)
+                    elif key_type == "ssh-ed25519":
+                        key = paramiko.Ed25519Key(data=key_bytes)
+                    elif key_type.startswith("ecdsa-sha2-"):
+                        key = paramiko.ECDSAKey(data=key_bytes)
+                    else:
+                        key = None
+                    
+                    if key:
+                        ssh.get_host_keys().add(config.ssh_host, key_type, key)
+            except Exception as e:
+                logger.warning(f"Failed to manually add host key for {config.ssh_host}: {e}")
         
         pkey = None
         if config.ssh_pkey_path:
@@ -261,6 +284,7 @@ class ModelManager:
                 ssh_port INTEGER,
                 ssh_username TEXT,
                 ssh_pkey_path TEXT,
+                ssh_host_key TEXT,
                 working_directory TEXT
             )
         ''')
@@ -293,7 +317,7 @@ class ModelManager:
         # 2. Check Database for dynamically registered SSH workspaces
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("SELECT ssh_host, ssh_port, ssh_username, ssh_pkey_path, working_directory FROM allowed_ips WHERE ip = ? AND ssh_host IS NOT NULL", (ip,))
+        cursor.execute("SELECT ssh_host, ssh_port, ssh_username, ssh_pkey_path, working_directory, ssh_host_key FROM allowed_ips WHERE ip = ? AND ssh_host IS NOT NULL", (ip,))
         row = cursor.fetchone()
         conn.close()
 
@@ -304,7 +328,8 @@ class ModelManager:
                 ssh_port=row[1],
                 ssh_username=row[2],
                 ssh_pkey_path=row[3],
-                working_directory=row[4] or "."
+                working_directory=row[4] or ".",
+                ssh_host_key=row[5]
             )
         
         # 3. Default to local persistent workspace
@@ -327,15 +352,16 @@ class ModelManager:
             
             if ssh_config:
                 cursor.execute('''
-                    INSERT INTO allowed_ips (ip, ssh_host, ssh_port, ssh_username, ssh_pkey_path, working_directory)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO allowed_ips (ip, ssh_host, ssh_port, ssh_username, ssh_pkey_path, ssh_host_key, working_directory)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(ip) DO UPDATE SET
                         ssh_host=excluded.ssh_host,
                         ssh_port=excluded.ssh_port,
                         ssh_username=excluded.ssh_username,
                         ssh_pkey_path=excluded.ssh_pkey_path,
+                        ssh_host_key=excluded.ssh_host_key,
                         working_directory=excluded.working_directory
-                ''', (ip, ssh_config.ssh_host, ssh_config.ssh_port, ssh_config.ssh_username, ssh_config.ssh_pkey_path, ssh_config.working_directory))
+                ''', (ip, ssh_config.ssh_host, ssh_config.ssh_port, ssh_config.ssh_username, ssh_config.ssh_pkey_path, ssh_config.ssh_host_key, ssh_config.working_directory))
             else:
                 cursor.execute("INSERT OR IGNORE INTO allowed_ips (ip) VALUES (?)", (ip,))
             

@@ -15,6 +15,7 @@ class AgentWorkspaceConfig(BaseModel):
     ssh_port: int = 22
     ssh_username: str
     ssh_pkey_path: Optional[str] = None
+    ssh_host_key: Optional[str] = None
     working_directory: str = "."
 
 class AgentConfig(BaseModel):

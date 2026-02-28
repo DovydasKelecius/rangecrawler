@@ -3,6 +3,7 @@ import logging
 import json
 import asyncio
 import sqlite3
+import os
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, List
@@ -12,7 +13,8 @@ from .manager import ModelManager, AGENT_TOOLS, LocalTools
 from .config import load_config
 
 # Initialize configuration and manager
-config = load_config()
+config_path = os.environ.get("RANGECRAWLER_CONFIG", "config.yaml")
+config = load_config(config_path)
 manager = ModelManager(config)
 
 logger = logging.getLogger("BrokerServer")
@@ -77,6 +79,7 @@ async def register_ssh(request: Request):
             ssh_port=body.get("ssh_port", 22),
             ssh_username=body["ssh_username"],
             ssh_pkey_path=body.get("ssh_pkey_path"),
+            ssh_host_key=body.get("ssh_host_key"),
             working_directory=body.get("working_directory", ".")
         )
         manager.register_ip(client_ip, ssh_config=ssh_cfg)
@@ -314,7 +317,7 @@ async def list_clients():
     """Returns a list of all registered clients for the worker to poll."""
     conn = sqlite3.connect(manager.db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT ip, ssh_host, ssh_port, ssh_username, ssh_pkey_path, working_directory FROM allowed_ips WHERE ssh_host IS NOT NULL")
+    cursor.execute("SELECT ip, ssh_host, ssh_port, ssh_username, ssh_pkey_path, working_directory, ssh_host_key FROM allowed_ips WHERE ssh_host IS NOT NULL")
     rows = cursor.fetchall()
     conn.close()
     
@@ -326,7 +329,8 @@ async def list_clients():
             "ssh_port": row[2],
             "ssh_username": row[3],
             "ssh_pkey_path": row[4],
-            "working_directory": row[5]
+            "working_directory": row[5],
+            "ssh_host_key": row[6]
         })
     return {"clients": clients}
 
