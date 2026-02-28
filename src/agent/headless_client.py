@@ -42,15 +42,18 @@ class RangeCrawlerAgent:
         if "127.0.0.1" in self.broker_url or "localhost" in self.broker_url:
             # Try to find the gateway IP of the network we are actually using
             try:
-                import subprocess
-                # Look for the IP address on the bridge interface that routes to the broker
-                # This is more robust than grep docker0
-                cmd = r"ip route get 1.1.1.1 | grep -oP 'src \K\S+'"
-                res = subprocess.check_output(cmd, shell=True).decode().strip()
-                if res and res.startswith("172."):
-                    return res
-            except Exception:
-                pass
+                import subprocess # nosec
+                # Look for the IP address on the bridge interface that routes to the broker.
+                # Avoid shell=True for security.
+                route_cmd = ["ip", "route", "get", "1.1.1.1"]
+                route_output = subprocess.check_output(route_cmd, stderr=subprocess.DEVNULL).decode() # nosec
+                # Parse output: "1.1.1.1 dev eth0 src 172.17.0.2 uid 0"
+                for part in route_output.split():
+                    if part.startswith("172."):
+                        return part
+            except (subprocess.SubprocessError, ImportError, IndexError):
+                logger.debug("Failed to detect Docker gateway IP via ip route")
+            
             return "172.18.0.1" 
 
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
