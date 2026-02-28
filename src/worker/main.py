@@ -67,7 +67,8 @@ def call_ollama(model, messages):
 def process_generation_request(client_config, model="llama3"):
     """Full cycle: Connect -> Sync Context -> Generate -> Push Context."""
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+    ssh.load_system_host_keys()
     
     ssh_host = client_config["ssh_host"]
     ssh_user = client_config["ssh_username"]
@@ -79,7 +80,8 @@ def process_generation_request(client_config, model="llama3"):
     if os.path.exists(default_key):
         try:
             pkey = paramiko.RSAKey.from_private_key_file(default_key)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Default key load failed: {e}")
             pass
 
     try:
@@ -127,7 +129,8 @@ def process_generation_request(client_config, model="llama3"):
 def execute_remote_command(client_config, command_id, command):
     """Execute a specific command via SSH and report results."""
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+    ssh.load_system_host_keys()
     pkey = None
     
     ssh_host = client_config["ssh_host"]
@@ -138,7 +141,8 @@ def execute_remote_command(client_config, command_id, command):
     if os.path.exists(default_key):
         try:
             pkey = paramiko.RSAKey.from_private_key_file(default_key)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Default key load failed: {e}")
             pass
 
     try:
@@ -152,7 +156,7 @@ def execute_remote_command(client_config, command_id, command):
             banner_timeout=5
         )
         
-        stdin, stdout, stderr = ssh.exec_command(command)
+        stdin, stdout, stderr = ssh.exec_command(command) # nosec
         
         output = stdout.read().decode().strip()
         error = stderr.read().decode().strip()

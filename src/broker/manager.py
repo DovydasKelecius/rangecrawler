@@ -4,6 +4,7 @@ import os
 import json
 import sqlite3
 import paramiko  # type: ignore[import-untyped]
+import shlex
 from datetime import datetime
 from typing import Dict, Union, Optional
 from pathlib import Path
@@ -199,7 +200,7 @@ class RemoteTools:
             # Create directories if needed
             remote_dir = os.path.dirname(full_path)
             if remote_dir:
-                ssh.exec_command(f"mkdir -p {remote_dir}")
+                ssh.exec_command(f"mkdir -p {shlex.quote(remote_dir)}") # nosec
             
             with sftp.open(full_path, 'w') as f:
                 f.write(content.encode('utf-8'))
@@ -226,8 +227,8 @@ class RemoteTools:
     async def run_bash(config: AgentWorkspaceConfig, command: str, timeout: int = 30) -> str:
         try:
             ssh = RemoteTools._get_ssh_client(config)
-            full_cmd = f"cd {config.working_directory} && {command}"
-            stdin, stdout, stderr = ssh.exec_command(full_cmd, timeout=timeout)
+            full_cmd = f"cd {shlex.quote(config.working_directory)} && {command}"
+            stdin, stdout, stderr = ssh.exec_command(full_cmd, timeout=timeout) # nosec
             output = stdout.read().decode() + stderr.read().decode()
             ssh.close()
             return output
