@@ -9,7 +9,7 @@ broker:
   port_assignment_url: null 
   
   # The default port the broker listens on
-  default_port: 8000
+  default_port: 8005
   
   # Timeout in seconds before a session is considered idle
   idle_timeout: 300
@@ -44,13 +44,6 @@ agent:
       ssh_username: "root"
       ssh_pkey_path: "/root/.ssh/id_rsa"
       working_directory: "/"
-
-# AI MODEL ROUTING
-# Map OpenAI-style model IDs to specific provider endpoints.
-models:
-  # Example: Using a local Ollama instance
-  - id: "llama3"
-    remote_url: "http://localhost:11434/api/"
 
 logging:
   # Logging levels: DEBUG, INFO, WARNING, ERROR, CRITICAL

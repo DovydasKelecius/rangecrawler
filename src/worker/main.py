@@ -99,9 +99,13 @@ def get_ollama_models():
         resp = httpx.get(f"{OLLAMA_URL}/api/tags", timeout=5.0)
         if resp.status_code == 200:
             models = resp.json().get("models", [])
-            return [m["name"] for m in models]
+            model_names = [m["name"] for m in models]
+            logger.debug(f"Fetched {len(model_names)} models from Ollama: {model_names}")
+            return model_names
+        else:
+            logger.error(f"Ollama tags error: {resp.status_code}")
     except Exception as e:
-        logger.warning(f"Could not fetch models from Ollama: {e}")
+        logger.warning(f"Could not fetch models from Ollama at {OLLAMA_URL}: {e}")
     return []
 
 def process_generation_request(client_config, model="llama3"):
@@ -257,15 +261,17 @@ def worker_loop():
         try:
             # 0. Report available models to broker
             ollama_models = get_ollama_models()
-            if ollama_models:
-                models_payload = [
-                    {"id": m, "remote_url": OLLAMA_URL} 
-                    for m in ollama_models
-                ]
-                try:
-                    httpx.post(f"{BROKER_URL}/worker/models", json={"models": models_payload}, timeout=5.0)
-                except Exception as e:
-                    logger.warning(f"Failed to report models to broker: {e}")
+            models_payload = [
+                {"id": m, "remote_url": OLLAMA_URL} 
+                for m in ollama_models
+            ]
+            try:
+                # Always POST, even if empty, so broker knows worker is alive
+                httpx.post(f"{BROKER_URL}/worker/models", json={"models": models_payload}, timeout=5.0)
+                if ollama_models:
+                    logger.debug(f"Reported {len(ollama_models)} models to broker.")
+            except Exception as e:
+                logger.warning(f"Failed to report models to broker: {e}")
 
             # 1. Get all registered clients
             resp = httpx.get(f"{BROKER_URL}/clients", timeout=10.0)

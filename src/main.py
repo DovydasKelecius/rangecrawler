@@ -73,7 +73,7 @@ def broker(
 
 @app.command()
 def agent(
-    broker_url: str = typer.Option("http://localhost:8000", "--broker", help="URL of the RangeCrawler broker"),
+    broker_url: str = typer.Option("http://localhost:8005", "--broker", help="URL of the RangeCrawler broker"),
     working_dir: Optional[str] = typer.Option(None, "--dir", help="Working directory for the LLM"),
     user: Optional[str] = typer.Option(None, "--user", help="Username to register"),
     ssh_port: int = typer.Option(22, "--ssh-port", help="SSH port of this machine"),
@@ -93,13 +93,19 @@ def agent(
         pkey=pkey,
         heartbeat=heartbeat
     )
-    if not success:
+    if success:
+        # Persist this broker choice for the client CLI
+        from src.client.cli import save_state, load_state
+        state = load_state()
+        state["broker_url"] = broker_url
+        save_state(state)
+    else:
         raise typer.Exit(code=1)
 
 @app.command()
 def worker(
-    broker_url: Optional[str] = typer.Option(None, envvar="BROKER_URL", help="URL of the RangeCrawler broker"),
-    ollama_url: Optional[str] = typer.Option(None, envvar="OLLAMA_URL", help="URL of the Ollama server"),
+    broker_url: str = typer.Option("http://localhost:8005", envvar="BROKER_URL", help="URL of the RangeCrawler broker"),
+    ollama_url: str = typer.Option("http://localhost:11434", envvar="OLLAMA_URL", help="URL of the Ollama server"),
 ):
     """
     Start the RangeCrawler Worker (Ollama orchestrator).

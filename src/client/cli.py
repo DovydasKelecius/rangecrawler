@@ -2,6 +2,7 @@ import httpx
 import typer
 import time
 import json
+import os
 from typing import Optional, List
 from rich.console import Console
 from rich.table import Table
@@ -11,15 +12,38 @@ from rich.panel import Panel
 console = Console()
 app = typer.Typer(help="RangeCrawler Client CLI: Interact with the broker and registered clients.")
 
-def get_broker_url(ctx: typer.Context):
-    return ctx.obj.get("broker_url", "http://localhost:8000")
+STATE_FILE = os.path.expanduser("~/.rangecrawler_state.json")
+
+def load_state():
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"broker_url": "http://localhost:8005"}
+
+def save_state(state):
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(state, f)
+    except Exception:
+        pass
 
 @app.callback()
 def main(
     ctx: typer.Context,
-    broker: str = typer.Option("http://localhost:8000", "--broker", help="URL of the RangeCrawler broker"),
+    broker: Optional[str] = typer.Option(None, "--broker", help="URL of the RangeCrawler broker"),
 ):
-    ctx.obj = {"broker_url": broker}
+    state = load_state()
+    if broker:
+        state["broker_url"] = broker
+        save_state(state)
+    
+    ctx.obj = state
+
+def get_broker_url(ctx: typer.Context):
+    return ctx.obj.get("broker_url", "http://localhost:8005")
 
 @app.command()
 def models(ctx: typer.Context):
@@ -28,12 +52,16 @@ def models(ctx: typer.Context):
     try:
         resp = httpx.get(f"{broker_url}/v1/models", timeout=10.0)
         if resp.status_code == 200:
-            models = resp.json().get("data", [])
-            table = Table(title="Available Models")
+            models_list = resp.json().get("data", [])
+            if not models_list:
+                console.print("[yellow]No models found. Ensure a worker is running and reporting models.[/yellow]")
+                return
+
+            table = Table(title=f"Available Models on {broker_url}")
             table.add_column("Model ID", style="cyan")
             table.add_column("Owned By", style="magenta")
             
-            for m in models:
+            for m in models_list:
                 table.add_row(m["id"], m["owned_by"])
             console.print(table)
         else:
@@ -48,15 +76,19 @@ def clients(ctx: typer.Context):
     try:
         resp = httpx.get(f"{broker_url}/clients", timeout=10.0)
         if resp.status_code == 200:
-            clients = resp.json().get("clients", [])
+            clients_list = resp.json().get("clients", [])
+            if not clients_list:
+                console.print("[yellow]No clients registered.[/yellow]")
+                return
+
             table = Table(title="Registered Clients")
             table.add_column("IP", style="green")
             table.add_column("User", style="yellow")
             table.add_column("SSH Host", style="blue")
             table.add_column("Workspace", style="dim")
             
-            for c in clients:
-                table.add_row(c["ip"], c["ssh_username"], c["ssh_host"], c["working_directory"])
+            for c in clients_list:
+                table.add_row(c["ip"], c["ssh_username"], c["ssh_host"], c.get("working_directory", "."))
             console.print(table)
         else:
             console.print(f"[bold red]Error:[/bold red] Broker returned {resp.status_code}")
@@ -108,7 +140,7 @@ def chat(
     broker_url = get_broker_url(ctx)
     messages = [{"role": "system", "content": system}]
     
-    console.print(f"[bold blue]Starting session with {model}. Type 'exit' or 'quit' to end.[/bold blue]")
+    console.print(f"[bold blue]Starting session with {model} via {broker_url}. Type 'exit' or 'quit' to end.[/bold blue]")
     
     while True:
         user_input = console.input("[bold green]User> [/bold green]")
@@ -134,9 +166,6 @@ def chat(
                 messages.append(assistant_msg)
                 
                 console.print(f"\n[bold yellow]Assistant>[/bold yellow] {content}")
-                
-                # If tool calls happened, they are already handled by the broker agent loop
-                # and consolidated into the final response we got.
             else:
                 console.print(f"[bold red]Error:[/bold red] Broker returned {resp.status_code}: {resp.text}")
         except Exception as e:
