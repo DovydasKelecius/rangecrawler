@@ -40,7 +40,7 @@ The Worker polls the broker and initiates secure SSH connections to clients.
 2. Start the Worker (replace `<BROKER_IP>` with VM 1's IP):
    ```bash
    export BROKER_URL=http://<BROKER_IP>:8000
-   export OLLAMA_URL=http://localhost:11434  # URL where Ollama is running
+   export OLLAMA_URL=http://localhost:11434  # URL wherep Ollama is running
    docker compose --profile worker up -d
    ```
 

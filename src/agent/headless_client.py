@@ -6,6 +6,7 @@ import platform
 import getpass
 import argparse
 import time
+import subprocess
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,6 @@ class RangeCrawlerAgent:
         if "127.0.0.1" in self.broker_url or "localhost" in self.broker_url:
             # Try to find the gateway IP of the network we are actually using
             try:
-                import subprocess # nosec
                 # Look for the IP address on the bridge interface that routes to the broker.
                 # Avoid shell=True for security.
                 route_cmd = ["ip", "route", "get", "1.1.1.1"]
@@ -51,7 +51,7 @@ class RangeCrawlerAgent:
                 for part in route_output.split():
                     if part.startswith("172."):
                         return part
-            except (subprocess.SubprocessError, ImportError, IndexError):
+            except (subprocess.SubprocessError, IndexError):
                 logger.debug("Failed to detect Docker gateway IP via ip route")
             
             return "172.18.0.1" 

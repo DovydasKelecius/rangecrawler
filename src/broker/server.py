@@ -187,17 +187,10 @@ async def get_command_status(command_id: int):
 async def forward_to_llm_api(model_id: str, path: str, body: Dict[str, Any]):
     """Low-level forwarder for a single turn with the remote API."""
     target_base = await manager.get_endpoint(model_id)
-    clean_path = path
-    if "googleapis.com" in target_base and path.startswith("/v1"):
-        clean_path = path[3:] # Remove '/v1'
+    target_url = target_base.rstrip("/") + "/" + path.lstrip("/")
     
-    target_url = target_base.rstrip("/") + "/" + clean_path.lstrip("/")
-    headers = {}
-    if config.auth.gemini_api_key:
-        headers["Authorization"] = f"Bearer {config.auth.gemini_api_key}"
-
     async with httpx.AsyncClient(timeout=config.broker.request_timeout) as client:
-        resp = await client.post(target_url, json=body, headers=headers)
+        resp = await client.post(target_url, json=body)
         if resp.status_code != 200:
             logger.error(f"Upstream API Error ({resp.status_code}): {resp.text}")
             try:

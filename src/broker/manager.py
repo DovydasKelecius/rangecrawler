@@ -274,39 +274,51 @@ class ModelManager:
         self.workspace_base.mkdir(parents=True, exist_ok=True)
 
     def _init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS allowed_ips (
-                ip TEXT PRIMARY KEY,
-                registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                ssh_host TEXT,
-                ssh_port INTEGER,
-                ssh_username TEXT,
-                ssh_pkey_path TEXT,
-                ssh_host_key TEXT,
-                working_directory TEXT
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS worker_keys (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                public_key TEXT,
-                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS command_queue (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                client_ip TEXT,
-                command TEXT,
-                status TEXT DEFAULT 'pending',
-                result TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
-        conn.close()
+        db_file = Path(self.db_path)
+        if db_file.is_dir():
+            raise IsADirectoryError(f"Database path {self.db_path} is a directory, but a file is expected. "
+                                    "If using Docker, ensure you 'touch' the file on the host before mounting.")
+        
+        # Ensure parent directory exists
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS allowed_ips (
+                    ip TEXT PRIMARY KEY,
+                    registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    ssh_host TEXT,
+                    ssh_port INTEGER,
+                    ssh_username TEXT,
+                    ssh_pkey_path TEXT,
+                    ssh_host_key TEXT,
+                    working_directory TEXT
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS worker_keys (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    public_key TEXT,
+                    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS command_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_ip TEXT,
+                    command TEXT,
+                    status TEXT DEFAULT 'pending',
+                    result TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to initialize database at {self.db_path}: {e}")
+            raise
 
     def get_workspace_context(self, ip: str) -> Union[Path, AgentWorkspaceConfig]:
         """Return either a local Path or a remote AgentWorkspaceConfig."""

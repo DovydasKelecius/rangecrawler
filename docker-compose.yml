@@ -19,10 +19,10 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./src:/app/src
-      - ./rangecrawler.db:/app/rangecrawler.db
+      - ./data:/app/data
     environment:
       - PYTHONPATH=/app
-      - GEMINI_API_KEY
+      - RANGECRAWLER_CONFIG=config.yaml
 
   # The Ollama Worker (Orchestrator)
   worker:
