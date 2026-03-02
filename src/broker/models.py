@@ -36,7 +36,7 @@ class BrokerConfig(BaseModel):
 
 class AppConfig(BaseModel):
     broker: BrokerConfig
-    models: List[ModelConfig]
+    models: List[ModelConfig] = Field(default_factory=list)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     logging_level: str = "INFO"
 

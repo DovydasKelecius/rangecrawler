@@ -125,5 +125,8 @@ def dashboard(
     typer.echo(f"Starting Dashboard on {host}:{port}")
     uvicorn.run("src.dashboard.app:app", host=host, port=port, reload=reload)
 
+from src.client.cli import app as client_app
+app.add_typer(client_app, name="client")
+
 if __name__ == "__main__":
     app()

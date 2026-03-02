@@ -30,7 +30,7 @@ async def security_middleware(request: Request, call_next):
     """Whitelist IP check for all requests except registration, clients, workers, and commands."""
     open_paths = [
         "/register", "/register/ssh", "/clients", 
-        "/worker/register", "/health", "/command/submit", 
+        "/worker/register", "/worker/models", "/health", "/command/submit", 
         "/command/pending", "/command/result", "/command/status"
     ]
     if any(request.url.path.startswith(p) for p in open_paths):
@@ -119,6 +119,18 @@ async def register_worker(request: Request):
     conn.close()
     
     return {"status": "ok", "message": "Worker public key registered"}
+
+@app.post("/worker/models")
+async def register_models(request: Request):
+    """Register models available on a worker."""
+    from .models import ModelConfig
+    body = await request.json()
+    models_data = body.get("models", [])
+    
+    models = [ModelConfig(**m) for m in models_data]
+    manager.register_models(models)
+    
+    return {"status": "ok", "registered_count": len(models)}
 
 @app.post("/command/submit")
 async def submit_command(request: Request):
@@ -347,5 +359,5 @@ async def get_stats():
 async def list_models():
     return {
         "object": "list",
-        "data": [{"id": mid, "object": "model", "owned_by": "rangecrawler"} for mid in manager.allowed_models]
+        "data": [{"id": mid, "object": "model", "owned_by": "rangecrawler"} for mid in manager.allowed_models.keys()]
     }

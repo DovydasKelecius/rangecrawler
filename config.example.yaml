@@ -41,16 +41,16 @@ agent:
     - client_ip: "192.168.1.50" # Example: A static VM in your network
       ssh_host: "192.168.1.50"
       ssh_port: 22
-      ssh_username: "ubuntu"
+      ssh_username: "root"
       ssh_pkey_path: "/root/.ssh/id_rsa"
-      working_directory: "/home/ubuntu/project"
+      working_directory: "/"
 
 # AI MODEL ROUTING
 # Map OpenAI-style model IDs to specific provider endpoints.
 models:
   # Example: Using a local Ollama instance
   - id: "llama3"
-    remote_url: "http://localhost:11434/v1/"
+    remote_url: "http://localhost:11434/api/"
 
 logging:
   # Logging levels: DEBUG, INFO, WARNING, ERROR, CRITICAL

@@ -93,6 +93,17 @@ def call_ollama(model, messages):
         logger.error(f"Failed to reach Ollama at {OLLAMA_URL}: {e}")
         return None
 
+def get_ollama_models():
+    """Fetch available models from the local Ollama instance."""
+    try:
+        resp = httpx.get(f"{OLLAMA_URL}/api/tags", timeout=5.0)
+        if resp.status_code == 200:
+            models = resp.json().get("models", [])
+            return [m["name"] for m in models]
+    except Exception as e:
+        logger.warning(f"Could not fetch models from Ollama: {e}")
+    return []
+
 def process_generation_request(client_config, model="llama3"):
     """Full cycle: Connect -> Sync Context -> Generate -> Push Context."""
     if not client_config:
@@ -244,6 +255,18 @@ def worker_loop():
     
     while True:
         try:
+            # 0. Report available models to broker
+            ollama_models = get_ollama_models()
+            if ollama_models:
+                models_payload = [
+                    {"id": m, "remote_url": OLLAMA_URL} 
+                    for m in ollama_models
+                ]
+                try:
+                    httpx.post(f"{BROKER_URL}/worker/models", json={"models": models_payload}, timeout=5.0)
+                except Exception as e:
+                    logger.warning(f"Failed to report models to broker: {e}")
+
             # 1. Get all registered clients
             resp = httpx.get(f"{BROKER_URL}/clients", timeout=10.0)
             if resp.status_code == 200:

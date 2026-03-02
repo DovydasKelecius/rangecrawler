@@ -273,6 +273,13 @@ class ModelManager:
         self.workspace_base = Path(config.agent.working_directory).resolve()
         self.workspace_base.mkdir(parents=True, exist_ok=True)
 
+    def register_models(self, models: List[ModelConfig]):
+        """Register or update models reported by a worker."""
+        for model in models:
+            if model.id not in self.allowed_models:
+                self.logger.info(f"Dynamically registered model: {model.id} -> {model.remote_url}")
+            self.allowed_models[model.id] = model
+
     def _init_db(self):
         db_file = Path(self.db_path)
         if db_file.is_dir():

@@ -27,4 +27,4 @@ rangecrawler = "src.main:app"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["broker", "agent", "worker", "dashboard"]
+packages = ["broker", "agent", "worker", "dashboard", "client"]
