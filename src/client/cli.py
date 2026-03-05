@@ -158,39 +158,69 @@ def run(
 @app.command()
 def chat(
     ctx: typer.Context,
+    ip: str = typer.Option(..., "--ip", help="IP of the client machine to 'inhabit'"),
     model: str = typer.Option(..., "--model", help="Model ID to use (e.g. llama3:latest)"),
-    system: str = typer.Option("You are a helpful assistant with access to a Linux terminal.", "--system", help="System prompt"),
 ):
-    """Start an interactive chat session with a model through the broker agent loop."""
+    """Start a secure interactive chat. The Worker handles everything locally via SSH."""
     broker_url = get_broker_url(ctx)
-    messages = [{"role": "system", "content": system}]
-    
-    console.print(f"[bold blue]Starting session with {model} via {broker_url}. Type 'exit' or 'quit' to end.[/bold blue]")
+    console.print(Panel(f"[bold blue]Secure Session Started[/bold blue]\n"
+                        f"Target: {ip}\nModel: {model}", title="RangeCrawler Chat"))
     
     while True:
         user_input = console.input("[bold green]User> [/bold green]")
         if user_input.lower() in ["exit", "quit"]:
             break
         
-        messages.append({"role": "user", "content": user_input})
-        
         try:
-            with console.status(f"[bold blue]Agent is thinking (using {model})..."):
-                resp = httpx.post(
-                    f"{broker_url}/v1/chat/completions",
-                    json={"model": model, "messages": messages},
-                    timeout=300.0 
-                )
-                
-            if resp.status_code == 200:
-                data = resp.json()
-                assistant_msg = data["choices"][0]["message"]
-                content = assistant_msg.get("content", "")
-                
-                messages.append(assistant_msg)
-                console.print(f"\n[bold yellow]Assistant>[/bold yellow] {content}")
-            else:
-                console.print(f"[bold red]Error:[/bold red] Broker returned {resp.status_code}: {resp.text}")
+            # 1. Trigger the worker by writing to prompt.txt
+            write_cmd = f"echo {json.dumps(user_input)} > prompt.txt"
+            resp = httpx.post(
+                f"{broker_url}/command/submit",
+                json={"client_ip": ip, "command": write_cmd},
+                timeout=10.0
+            )
+            
+            if resp.status_code != 200:
+                console.print(f"[bold red]Error submitting prompt: {resp.status_code}[/bold red]")
+                continue
+
+            # 2. Poll for the worker to finish and update context.json
+            with console.status(f"[bold blue]Agent is working on {ip}..."):
+                # We know the turn is finished when context.json contains a new assistant message
+                while True:
+                    read_cmd = "cat context.json"
+                    read_resp = httpx.post(
+                        f"{broker_url}/command/submit",
+                        json={"client_ip": ip, "command": read_cmd},
+                        timeout=10.0
+                    )
+                    
+                    if read_resp.status_code == 200:
+                        cmd_id = read_resp.json().get("command_id")
+                        
+                        # Wait for 'cat' command to complete
+                        while True:
+                            stat_resp = httpx.get(f"{broker_url}/command/status/{cmd_id}", timeout=5.0)
+                            if stat_resp.status_code == 200:
+                                d = stat_resp.json()
+                                if d["status"] == "completed":
+                                    try:
+                                        # Parse the JSON from the 'cat' output
+                                        raw_out = d["result"].split("STDOUT:\n")[1].split("\nSTDERR:")[0]
+                                        context = json.loads(raw_out)
+                                        last_msg = context["messages"][-1]
+                                        if last_msg["role"] == "assistant":
+                                            console.print(f"\n[bold yellow]Assistant>[/bold yellow] {last_msg['content']}")
+                                            break 
+                                    except Exception:
+                                        pass
+                            time.sleep(2)
+                            if 'context' in locals() and context["messages"][-1]["role"] == "assistant":
+                                break
+                        
+                        if 'context' in locals() and context["messages"][-1]["role"] == "assistant":
+                            break
+                    time.sleep(3)
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {e}")
 

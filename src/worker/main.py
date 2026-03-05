@@ -8,6 +8,67 @@ import json
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - WORKER - %(message)s")
 logger = logging.getLogger("OllamaWorker")
 
+# --- OpenAI-Compatible Tool Definitions ---
+AGENT_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read the content of a file from local disk.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File name or relative path within your workspace."}
+                },
+                "required": ["path"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Create or overwrite a file with specific content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File name or relative path within your workspace."},
+                    "content": {"type": "string", "description": "Full text content to write."}
+                },
+                "required": ["path", "content"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_directory",
+            "description": "List files and directories in your current workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Relative directory path (default: '.')."}
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_bash",
+            "description": "Execute a shell command in your workspace and return its output.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "The command to run."},
+                    "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)."}
+                },
+                "required": ["command"]
+            }
+        }
+    }
+]
+
 # Suppress noisy library logs
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -146,17 +207,71 @@ def setup_host_key(ssh, host, host_key):
     except Exception as e:
         logger.warning(f"Failed to load host key for {host}: {e}")
 
-def call_ollama(model, messages):
+def execute_worker_tool(ssh, remote_path, func_name, func_args):
+    """Execute a tool on the client via the existing SSH connection."""
+    import shlex
+    try:
+        if func_name == "read_file":
+            path = func_args.get("path")
+            sftp = ssh.open_sftp()
+            try:
+                full_path = os.path.join(remote_path, path)
+                with sftp.open(full_path, "r") as f:
+                    return f.read().decode("utf-8")
+            finally:
+                sftp.close()
+        
+        elif func_name == "write_file":
+            path = func_args.get("path")
+            content = func_args.get("content")
+            sftp = ssh.open_sftp()
+            try:
+                full_path = os.path.join(remote_path, path)
+                # Create directories
+                remote_dir = os.path.dirname(full_path)
+                if remote_dir:
+                    ssh.exec_command(f"mkdir -p {shlex.quote(remote_dir)}")
+                with sftp.open(full_path, "w") as f:
+                    f.write(content)
+                return f"Success: Wrote to {path}"
+            finally:
+                sftp.close()
+
+        elif func_name == "list_directory":
+            path = func_args.get("path", ".")
+            sftp = ssh.open_sftp()
+            try:
+                full_path = os.path.join(remote_path, path)
+                return json.dumps(sftp.listdir(full_path))
+            finally:
+                sftp.close()
+
+        elif func_name == "run_bash":
+            command = func_args.get("command")
+            timeout = func_args.get("timeout", 30)
+            full_cmd = f"cd {shlex.quote(remote_path)} && {command}"
+            stdin, stdout, stderr = ssh.exec_command(full_cmd, timeout=timeout)
+            return stdout.read().decode() + stderr.read().decode()
+
+        return f"Error: Tool {func_name} not implemented in worker."
+    except Exception as e:
+        return f"Error executing {func_name}: {e}"
+
+def call_ollama(model, messages, tools=None):
     """Call the Ollama API for generation."""
     logger.info(f"Calling Ollama model {model}...")
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": False
+    }
+    if tools:
+        payload["tools"] = tools
+
     try:
         resp = httpx.post(
             f"{OLLAMA_URL}/api/chat",
-            json={
-                "model": model,
-                "messages": messages,
-                "stream": False
-            },
+            json=payload,
             timeout=120.0
         )
         if resp.status_code == 200:
@@ -182,6 +297,40 @@ def get_ollama_models():
     except Exception as e:
         logger.warning(f"Could not fetch models from Ollama at {OLLAMA_URL}: {e}")
     return []
+
+def worker_agent_loop(ssh, remote_path, model, messages):
+    """Run the recursive agent loop locally on the worker."""
+    current_messages = list(messages)
+    max_iterations = 10
+    
+    for iteration in range(max_iterations):
+        logger.info(f"Worker Agent Loop: {iteration+1}/{max_iterations}")
+        
+        response_msg = call_ollama(model, current_messages, tools=AGENT_TOOLS)
+        if not response_msg:
+            return None
+            
+        current_messages.append(response_msg)
+        
+        if "tool_calls" in response_msg and response_msg["tool_calls"]:
+            for tool_call in response_msg["tool_calls"]:
+                func_name = tool_call["function"]["name"]
+                func_args = tool_call["function"]["arguments"]
+                
+                logger.info(f"[*] Worker Executing Tool: {func_name}({func_args})")
+                result = execute_worker_tool(ssh, remote_path, func_name, func_args)
+                
+                current_messages.append({
+                    "role": "tool",
+                    "content": str(result)
+                })
+            # Loop again to give the model the tool results
+            continue
+        else:
+            # Final text response
+            return response_msg
+            
+    return {"role": "assistant", "content": "Error: Max iterations reached in worker agent loop."}
 
 def process_generation_request(client_config, model="llama3"):
     """Full cycle: Connect -> Sync Context -> Generate -> Push Context."""
@@ -238,11 +387,13 @@ def process_generation_request(client_config, model="llama3"):
             context = fetch_context(ssh, remote_path)
             context["messages"].append({"role": "user", "content": prompt})
             
-            response_msg = call_ollama(model, context["messages"])
+            # Run the full agent loop locally on the worker
+            response_msg = worker_agent_loop(ssh, remote_path, model, context["messages"])
+            
             if response_msg:
                 context["messages"].append(response_msg)
                 push_context(ssh, remote_path, context)
-                logger.info(f"[SUCCESS] Context updated on {ssh_host}.")
+                logger.info(f"[SUCCESS] Agent session finished on {ssh_host}.")
         
     except Exception as e:
         logger.error(f"Generation cycle failed for {ssh_host}: {e}")

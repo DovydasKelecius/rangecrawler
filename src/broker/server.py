@@ -202,6 +202,8 @@ async def forward_to_llm_api(model_id: str, path: str, body: Dict[str, Any]):
     target_base = await manager.get_endpoint(model_id)
     target_url = target_base.rstrip("/") + "/" + path.lstrip("/")
     
+    logger.debug(f"Forwarding chat request for model {model_id} to {target_url}")
+    
     async with httpx.AsyncClient(timeout=config.broker.request_timeout) as client:
         resp = await client.post(target_url, json=body)
         if resp.status_code != 200:
