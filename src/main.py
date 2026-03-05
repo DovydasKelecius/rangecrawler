@@ -108,7 +108,7 @@ def agent(
 
 @app.command()
 def worker(
-    broker_url: str = typer.Option("http://localhost:8005", envvar="BROKER_URL", help="URL of the RangeCrawler broker"),
+    broker_url: Optional[str] = typer.Option(None, envvar="BROKER_URL", help="URL of the RangeCrawler broker"),
     ollama_url: str = typer.Option("http://localhost:11434", envvar="OLLAMA_URL", help="URL of the Ollama server"),
 ):
     """

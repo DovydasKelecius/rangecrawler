@@ -35,5 +35,5 @@ services:
       - ~/.ssh:/root/.ssh:ro
     environment:
       - PYTHONPATH=/app
-      - BROKER_URL=${BROKER_URL:-http://localhost:8005}
+      - BROKER_URL=${BROKER_URL:-http://10.1.0.129:8005}
       - OLLAMA_URL=${OLLAMA_URL:-http://localhost:11434}

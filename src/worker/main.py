@@ -12,13 +12,30 @@ BROKER_URL = os.getenv("BROKER_URL", "http://localhost:8005")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 
 def get_effective_broker_url():
-    """Return the broker URL, prioritizing ENV, then state file, then default."""
+    """Return the broker URL, prioritizing ENV, then config.yaml, then state file."""
     # 1. Check environment variable
     env_url = os.getenv("BROKER_URL")
-    if env_url:
+    if env_url and "localhost" not in env_url and "127.0.0.1" not in env_url:
         return env_url
     
-    # 2. Check state file (if mounted or available)
+    # 2. Check config.yaml (if it exists)
+    config_path = os.environ.get("RANGECRAWLER_CONFIG", "config.yaml")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                import yaml
+                data = yaml.safe_load(f)
+                broker_cfg = data.get("broker", {})
+                host = broker_cfg.get("host", "localhost")
+                # If host is 0.0.0.0, we can't use it as a target
+                if host == "0.0.0.0":
+                    host = "localhost"
+                port = broker_cfg.get("default_port", 8005)
+                return f"http://{host}:{port}"
+        except Exception:
+            pass
+
+    # 3. Check state file
     state_path = os.path.expanduser("~/.rangecrawler_state.json")
     if os.path.exists(state_path):
         try:
@@ -363,6 +380,9 @@ def worker_loop():
             else:
                 logger.error(f"Broker error: {resp.status_code}")
         except Exception as e:
+            if "localhost" in BROKER_URL or "127.0.0.1" in BROKER_URL:
+                logger.error(f"FATAL: Connection refused to {BROKER_URL}. If your Broker is on a different VM, you MUST set BROKER_URL to the Broker's IP.")
+            
             import traceback
             logger.error(f"Worker Loop Error: {e}")
             logger.error(traceback.format_exc())
