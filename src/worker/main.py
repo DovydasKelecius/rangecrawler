@@ -4,6 +4,7 @@ import time
 import os
 import logging
 import json
+import socket
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - WORKER - %(message)s")
 logger = logging.getLogger("OllamaWorker")
@@ -126,7 +127,7 @@ def get_worker_pkey():
         if os.path.exists(path):
             try:
                 key = key_class.from_private_key_file(path)
-                logger.info(f"Loaded worker private key from {path}")
+                logger.debug(f"Loaded worker private key from {path}")
                 return key
             except Exception as e:
                 logger.debug(f"Failed to load key from {path}: {e}")
@@ -156,9 +157,13 @@ def fetch_context(ssh, remote_path):
         try:
             with sftp.open(context_file, "r") as f:
                 return json.load(f)
-        except FileNotFoundError:
-            logger.info("context.json not found on client. Initializing new context.")
-            return {"messages": []}
+        except (FileNotFoundError, IOError):
+            logger.info("context.json not found on client. Creating new empty context.")
+            new_context = {"messages": []}
+            # Create the file immediately so it exists for further use
+            with sftp.open(context_file, "w") as f:
+                f.write(json.dumps(new_context, indent=2))
+            return new_context
     except Exception as e:
         logger.error(f"Error fetching context: {e}")
         return {"messages": []}
@@ -203,7 +208,7 @@ def setup_host_key(ssh, host, host_key):
             if key:
                 # Add to in-memory store. This satisfies RejectPolicy for this session.
                 ssh.get_host_keys().add(host, key_type, key)
-                logger.info(f"Loaded host key for {host} into memory ({key_type})")
+                logger.debug(f"Loaded host key for {host} into memory ({key_type})")
     except Exception as e:
         logger.warning(f"Failed to load host key for {host}: {e}")
 
@@ -304,7 +309,8 @@ def worker_agent_loop(ssh, remote_path, model, messages):
     max_iterations = 10
     
     for iteration in range(max_iterations):
-        logger.info(f"Worker Agent Loop: {iteration+1}/{max_iterations}")
+        turn = iteration + 1
+        logger.info(f"[THINKING] Turn {turn}/{max_iterations} using {model}...")
         
         response_msg = call_ollama(model, current_messages, tools=AGENT_TOOLS)
         if not response_msg:
@@ -317,8 +323,9 @@ def worker_agent_loop(ssh, remote_path, model, messages):
                 func_name = tool_call["function"]["name"]
                 func_args = tool_call["function"]["arguments"]
                 
-                logger.info(f"[*] Worker Executing Tool: {func_name}({func_args})")
+                logger.info(f"[TOOL CALL] {func_name}({func_args})")
                 result = execute_worker_tool(ssh, remote_path, func_name, func_args)
+                logger.info(f"[TOOL RESULT] {func_name} execution finished.")
                 
                 current_messages.append({
                     "role": "tool",
@@ -328,6 +335,8 @@ def worker_agent_loop(ssh, remote_path, model, messages):
             continue
         else:
             # Final text response
+            content = response_msg.get("content", "")
+            logger.info(f"[ANSWER] Agent session complete. Output: {content[:100]}...")
             return response_msg
             
     return {"role": "assistant", "content": "Error: Max iterations reached in worker agent loop."}
@@ -375,7 +384,7 @@ def process_generation_request(client_config, model="llama3"):
                 with sftp.open(prompt_file, "r") as f:
                     prompt = f.read().strip()
                 if prompt:
-                    logger.info(f"[PROMPT FOUND] on {ssh_host}")
+                    logger.info(f"[RECEIVED] New prompt from {ssh_host}: \"{prompt[:50]}...\"")
                     # Delete prompt file after reading to avoid re-processing
                     sftp.remove(prompt_file)
             except FileNotFoundError:
@@ -393,7 +402,6 @@ def process_generation_request(client_config, model="llama3"):
             if response_msg:
                 context["messages"].append(response_msg)
                 push_context(ssh, remote_path, context)
-                logger.info(f"[SUCCESS] Agent session finished on {ssh_host}.")
                 
                 # Push to broker cache so CLI can see it instantly
                 try:
