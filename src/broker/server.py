@@ -114,7 +114,8 @@ async def register_worker(request: Request):
     
     conn = sqlite3.connect(manager.db_path)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO worker_keys (public_key) VALUES (?)", (public_key,))
+    # Use OR REPLACE to ensure we don't pile up old keys
+    cursor.execute("INSERT OR REPLACE INTO worker_keys (public_key) VALUES (?)", (public_key,))
     conn.commit()
     conn.close()
     

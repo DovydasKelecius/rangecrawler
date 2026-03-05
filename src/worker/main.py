@@ -188,6 +188,7 @@ def process_generation_request(client_config, model="llama3"):
         # Optimization: Check if client even wants a generation before connecting?
         # For now, we still connect to check prompt.txt as per original requirement.
         logger.debug(f"Checking for generation request on {ssh_host}...")
+        logger.debug(f"Connecting with user={ssh_user}, pkey={'Provided' if pkey else 'None'}, look_for_keys=True")
         ssh.connect(
             hostname=ssh_host, 
             port=ssh_port, 
@@ -251,6 +252,7 @@ def execute_remote_command(client_config, command_id, command):
 
     try:
         logger.info(f"Connecting to {ssh_user}@{ssh_host} to run command {command_id}: {command}")
+        logger.debug(f"SSH Connect params: user={ssh_user}, pkey={'Provided' if pkey else 'None'}, look_for_keys=True")
         ssh.connect(
             hostname=ssh_host, 
             port=ssh_port, 
