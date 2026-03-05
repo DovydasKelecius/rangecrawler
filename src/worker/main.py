@@ -185,16 +185,17 @@ def process_generation_request(client_config, model="llama3"):
         
         sftp = ssh.open_sftp()
         prompt = None
-        prompt_file = os.path.join(remote_path, "prompt.txt")
         try:
-            with sftp.open(prompt_file, "r") as f:
-                prompt = f.read().strip()
-            if prompt:
-                logger.info(f"[PROMPT FOUND] on {ssh_host}")
-                # Delete prompt file after reading to avoid re-processing
-                sftp.remove(prompt_file)
-        except FileNotFoundError:
-            pass
+            prompt_file = os.path.join(remote_path, "prompt.txt")
+            try:
+                with sftp.open(prompt_file, "r") as f:
+                    prompt = f.read().strip()
+                if prompt:
+                    logger.info(f"[PROMPT FOUND] on {ssh_host}")
+                    # Delete prompt file after reading to avoid re-processing
+                    sftp.remove(prompt_file)
+            except FileNotFoundError:
+                pass
         finally:
             sftp.close()
 
@@ -208,9 +209,10 @@ def process_generation_request(client_config, model="llama3"):
                 push_context(ssh, remote_path, context)
                 logger.info(f"[SUCCESS] Context updated on {ssh_host}.")
         
-        ssh.close()
     except Exception as e:
         logger.error(f"Generation cycle failed for {ssh_host}: {e}")
+    finally:
+        ssh.close()
 
 def execute_remote_command(client_config, command_id, command):
     """Execute a specific command via SSH and report results."""
@@ -262,7 +264,6 @@ def execute_remote_command(client_config, command_id, command):
             "result": combined_result
         }, timeout=10.0)
         
-        ssh.close()
         return True
     except Exception as e:
         err_msg = f"SSH/Execution Error on {ssh_host}: {e}"
@@ -272,6 +273,8 @@ def execute_remote_command(client_config, command_id, command):
             "result": err_msg
         }, timeout=10.0)
         return False
+    finally:
+        ssh.close()
 
 def register_worker_key():
     """Read local public key and send it to the broker."""
