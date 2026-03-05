@@ -383,7 +383,10 @@ def process_generation_request(client_config, model="llama3"):
             
             try:
                 with sftp.open(prompt_file, "r") as f:
-                    prompt = f.read().strip()
+                    content = f.read()
+                    # SFTP read returns bytes, must decode to string
+                    prompt = content.decode("utf-8").strip() if content else None
+                
                 if prompt:
                     logger.info(f"[RECEIVED] New prompt from {ssh_host}: \"{prompt[:50]}...\"")
                     sftp.remove(prompt_file)
@@ -543,8 +546,8 @@ def worker_loop():
     iteration = 0
     while True:
         try:
-            # 0. Report available models to broker (every 10 iterations)
-            if iteration % 10 == 0:
+            # 0. Report available models to broker (every 60 iterations)
+            if iteration % 60 == 0:
                 ollama_models = get_ollama_models()
                 if ollama_models:
                     logger.info(f"[STATUS] Reporting {len(ollama_models)} models to broker...")
