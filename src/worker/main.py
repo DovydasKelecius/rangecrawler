@@ -434,8 +434,11 @@ def execute_remote_command(client_config, command_id, command):
     pkey = get_worker_pkey()
 
     try:
-        logger.info(f"Connecting to {ssh_user}@{ssh_host} to run command {command_id}: {command}")
-        logger.debug(f"SSH Connect params: user={ssh_user}, pkey={'Provided' if pkey else 'None'}, look_for_keys=True")
+        import shlex
+        # Always CD into the workspace before running the command
+        full_command = f"cd {shlex.quote(client_config.get('working_directory', '.'))} && {command}"
+        
+        logger.debug(f"Connecting to {ssh_user}@{ssh_host} to run command {command_id}")
         ssh.connect(
             hostname=ssh_host, 
             port=ssh_port, 
@@ -447,7 +450,7 @@ def execute_remote_command(client_config, command_id, command):
             look_for_keys=True
         )
         
-        stdin, stdout, stderr = ssh.exec_command(command) # nosec
+        stdin, stdout, stderr = ssh.exec_command(full_command) # nosec
         
         output = stdout.read().decode().strip()
         error = stderr.read().decode().strip()
@@ -530,9 +533,11 @@ def worker_loop():
         parsed = urlparse(OLLAMA_URL)
         my_ollama_url = f"{parsed.scheme}://{my_ip}:{parsed.port or 11434}"
 
-    logger.info(f"Worker started. Broker: {BROKER_URL} | Reporting Ollama at: {my_ollama_url}")
+    logger.debug(f"Worker details: Broker={BROKER_URL}, Ollama={my_ollama_url}")
     
     register_worker_key()
+    
+    logger.info(f"[READY] Worker connected to {BROKER_URL}. Listening for prompts...")
     
     iteration = 0
     while True:
@@ -540,6 +545,8 @@ def worker_loop():
             # 0. Report available models to broker (every 10 iterations)
             if iteration % 10 == 0:
                 ollama_models = get_ollama_models()
+                if ollama_models:
+                    logger.info(f"[STATUS] Reporting {len(ollama_models)} models to broker...")
                 models_payload = [
                     {"id": m, "remote_url": my_ollama_url} 
                     for m in ollama_models
