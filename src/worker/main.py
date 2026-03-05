@@ -5,8 +5,13 @@ import os
 import logging
 import json
 
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - WORKER - %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - WORKER - %(message)s")
 logger = logging.getLogger("OllamaWorker")
+
+# Suppress noisy library logs
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("paramiko").setLevel(logging.WARNING)
 
 BROKER_URL = os.getenv("BROKER_URL", "http://localhost:8005")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -46,6 +51,22 @@ def get_effective_broker_url():
             pass
             
     return "http://localhost:8005"
+
+def get_worker_pkey():
+    """Try to load the worker's private key from common locations."""
+    key_paths = [
+        ("/root/.ssh/id_rsa", paramiko.RSAKey),
+        ("/root/.ssh/id_ed25519", paramiko.Ed25519Key),
+        (os.path.expanduser("~/.ssh/id_rsa"), paramiko.RSAKey),
+        (os.path.expanduser("~/.ssh/id_ed25519"), paramiko.Ed25519Key),
+    ]
+    for path, key_class in key_paths:
+        if os.path.exists(path):
+            try:
+                return key_class.from_private_key_file(path)
+            except Exception as e:
+                logger.debug(f"Failed to load key from {path}: {e}")
+    return None
 
 def fetch_context(ssh, remote_path):
     """Download context.json from the client."""
@@ -161,14 +182,7 @@ def process_generation_request(client_config, model="llama3"):
     
     setup_host_key(ssh, ssh_host, host_key)
     
-    default_key = "/root/.ssh/id_rsa"
-    pkey = None
-    if os.path.exists(default_key):
-        try:
-            pkey = paramiko.RSAKey.from_private_key_file(default_key)
-        except Exception as e:
-            logger.debug(f"Default key load failed: {e}")
-            pass
+    pkey = get_worker_pkey()
 
     try:
         # Optimization: Check if client even wants a generation before connecting?
@@ -180,7 +194,9 @@ def process_generation_request(client_config, model="llama3"):
             username=ssh_user, 
             pkey=pkey, 
             timeout=5,
-            banner_timeout=5
+            banner_timeout=5,
+            allow_agent=True,
+            look_for_keys=True
         )
         
         sftp = ssh.open_sftp()
@@ -231,13 +247,7 @@ def execute_remote_command(client_config, command_id, command):
     
     setup_host_key(ssh, ssh_host, host_key)
     
-    default_key = "/root/.ssh/id_rsa"
-    if os.path.exists(default_key):
-        try:
-            pkey = paramiko.RSAKey.from_private_key_file(default_key)
-        except Exception as e:
-            logger.debug(f"Default key load failed: {e}")
-            pass
+    pkey = get_worker_pkey()
 
     try:
         logger.info(f"Connecting to {ssh_user}@{ssh_host} to run command {command_id}: {command}")
@@ -247,7 +257,9 @@ def execute_remote_command(client_config, command_id, command):
             username=ssh_user, 
             pkey=pkey, 
             timeout=5,
-            banner_timeout=5
+            banner_timeout=5,
+            allow_agent=True,
+            look_for_keys=True
         )
         
         stdin, stdout, stderr = ssh.exec_command(command) # nosec
@@ -278,12 +290,26 @@ def execute_remote_command(client_config, command_id, command):
 
 def register_worker_key():
     """Read local public key and send it to the broker."""
-    pub_key_path = "/root/.ssh/id_rsa.pub"
-    if os.path.exists(pub_key_path):
+    pub_key_paths = [
+        "/root/.ssh/id_rsa.pub",
+        "/root/.ssh/id_ed25519.pub",
+        os.path.expanduser("~/.ssh/id_rsa.pub"),
+        os.path.expanduser("~/.ssh/id_ed25519.pub"),
+    ]
+    
+    pub_key = None
+    for path in pub_key_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    pub_key = f.read().strip()
+                logger.debug(f"Found worker public key at {path}")
+                break
+            except Exception:
+                continue
+    
+    if pub_key:
         try:
-            with open(pub_key_path, "r") as f:
-                pub_key = f.read().strip()
-            
             resp = httpx.post(f"{BROKER_URL}/worker/register", json={"public_key": pub_key}, timeout=10.0)
             if resp.status_code == 200:
                 logger.info("[+] Registered worker public key with broker.")
@@ -291,6 +317,8 @@ def register_worker_key():
                 logger.error(f"[-] Failed to register worker key: {resp.status_code}")
         except Exception as e:
             logger.error(f"[-] Error registering worker key: {e}")
+    else:
+        logger.warning("No worker public key found to register. Remote access might fail.")
 
 def get_reachable_ip():
     """Find the IP address of this worker that can reach the broker."""
@@ -333,21 +361,23 @@ def worker_loop():
     
     register_worker_key()
     
+    iteration = 0
     while True:
         try:
-            # 0. Report available models to broker
-            ollama_models = get_ollama_models()
-            models_payload = [
-                {"id": m, "remote_url": my_ollama_url} 
-                for m in ollama_models
-            ]
-            try:
-                # Always POST, even if empty, so broker knows worker is alive
-                httpx.post(f"{BROKER_URL}/worker/models", json={"models": models_payload}, timeout=5.0)
-                if ollama_models:
-                    logger.debug(f"Reported {len(ollama_models)} models to broker.")
-            except Exception as e:
-                logger.warning(f"Failed to report models to broker: {e}")
+            # 0. Report available models to broker (every 10 iterations)
+            if iteration % 10 == 0:
+                ollama_models = get_ollama_models()
+                models_payload = [
+                    {"id": m, "remote_url": my_ollama_url} 
+                    for m in ollama_models
+                ]
+                try:
+                    # Always POST, even if empty, so broker knows worker is alive
+                    httpx.post(f"{BROKER_URL}/worker/models", json={"models": models_payload}, timeout=5.0)
+                    if ollama_models:
+                        logger.debug(f"Reported {len(ollama_models)} models to broker.")
+                except Exception as e:
+                    logger.warning(f"Failed to report models to broker: {e}")
 
             # 1. Get all registered clients
             resp = httpx.get(f"{BROKER_URL}/clients", timeout=10.0)
@@ -355,33 +385,31 @@ def worker_loop():
                 clients = resp.json().get("clients", [])
                 if not clients:
                     logger.debug("No clients registered.")
+                    time.sleep(5)
+                    iteration += 1
                     continue
                 
                 for client in clients:
-                    logger.debug(f"STEP 1: client={client}")
                     if client is None:
                         continue
                     client_ip = client["ip"]
-                    logger.debug(f"STEP 2: client_ip={client_ip}")
                     
                     # 2. Check for pending commands
                     cmd_resp = httpx.get(f"{BROKER_URL}/command/pending/{client_ip}", timeout=10.0)
-                    logger.debug(f"STEP 3: cmd_resp status={cmd_resp.status_code}")
                     if cmd_resp.status_code == 200:
                         cmds_data = cmd_resp.json()
-                        logger.debug(f"STEP 4: cmds_data={cmds_data}")
                         cmds = cmds_data.get("commands", [])
                         if cmds:
                             logger.info(f"Found {len(cmds)} pending commands for {client_ip}")
                         for cmd in cmds:
-                            logger.debug(f"STEP 5: cmd={cmd}")
                             execute_remote_command(client, cmd["id"], cmd["command"])
                     
                     # 3. Check for generation (Context Sync Loop)
-                    logger.debug("STEP 6: calling process_generation_request")
                     process_generation_request(client)
             else:
                 logger.error(f"Broker error: {resp.status_code}")
+            
+            iteration += 1
         except Exception as e:
             if "localhost" in BROKER_URL or "127.0.0.1" in BROKER_URL:
                 logger.error(f"FATAL: Connection refused to {BROKER_URL}. If your Broker is on a different VM, you MUST set BROKER_URL to the Broker's IP.")
