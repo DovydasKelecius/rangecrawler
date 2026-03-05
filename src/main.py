@@ -95,10 +95,14 @@ def agent(
     )
     if success:
         # Persist this broker choice for the client CLI
-        from src.client.cli import save_state, load_state
-        state = load_state()
-        state["broker_url"] = broker_url
-        save_state(state)
+        try:
+            from src.client.cli import save_state, load_state
+            state = load_state()
+            state["broker_url"] = broker_url
+            save_state(state)
+            typer.echo(f"[*] Broker URL {broker_url} saved for client CLI.")
+        except Exception:
+            pass
     else:
         raise typer.Exit(code=1)
 

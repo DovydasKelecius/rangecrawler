@@ -6,15 +6,16 @@ import os
 from typing import Optional, List
 from rich.console import Console
 from rich.table import Table
-from rich.live import Live
 from rich.panel import Panel
 
 console = Console()
 app = typer.Typer(help="RangeCrawler Client CLI: Interact with the broker and registered clients.")
 
+# State file location
 STATE_FILE = os.path.expanduser("~/.rangecrawler_state.json")
 
 def load_state():
+    """Load the persisted client state."""
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r") as f:
@@ -24,19 +25,24 @@ def load_state():
     return {"broker_url": "http://localhost:8005"}
 
 def save_state(state):
+    """Save the client state to disk."""
     try:
         with open(STATE_FILE, "w") as f:
             json.dump(state, f)
-    except Exception:
-        pass
+    except Exception as e:
+        console.print(f"[dim red]Warning: Could not save state: {e}[/dim red]")
 
 @app.callback()
 def main(
     ctx: typer.Context,
     broker: Optional[str] = typer.Option(None, "--broker", help="URL of the RangeCrawler broker"),
 ):
+    """
+    Client CLI entry point. Loads state and overrides with --broker if provided.
+    """
     state = load_state()
     if broker:
+        # If user provides a broker URL, save it as the new default
         state["broker_url"] = broker
         save_state(state)
     
@@ -46,23 +52,43 @@ def get_broker_url(ctx: typer.Context):
     return ctx.obj.get("broker_url", "http://localhost:8005")
 
 @app.command()
+def status(ctx: typer.Context):
+    """Show current client configuration and connectivity."""
+    broker_url = get_broker_url(ctx)
+    
+    console.print(Panel(
+        f"[bold blue]Active Broker:[/bold blue] {broker_url}\n"
+        f"[bold green]State File:[/bold green] {STATE_FILE}",
+        title="RangeCrawler Client Status"
+    ))
+    
+    try:
+        resp = httpx.get(f"{broker_url}/health", timeout=5.0)
+        if resp.status_code == 200:
+            console.print("[bold green]✓ Broker is ONLINE[/bold green]")
+        else:
+            console.print(f"[bold red]✗ Broker returned error {resp.status_code}[/bold red]")
+    except Exception as e:
+        console.print(f"[bold red]✗ Could not reach broker: {e}[/bold red]")
+
+@app.command()
 def models(ctx: typer.Context):
-    """List available models on the broker."""
+    """List available models discovered via Ollama /api/tags."""
     broker_url = get_broker_url(ctx)
     try:
         resp = httpx.get(f"{broker_url}/v1/models", timeout=10.0)
         if resp.status_code == 200:
             models_list = resp.json().get("data", [])
             if not models_list:
-                console.print("[yellow]No models found. Ensure a worker is running and reporting models.[/yellow]")
+                console.print("[yellow]No models found. Ensure a worker is running and reporting Ollama models.[/yellow]")
                 return
 
             table = Table(title=f"Available Models on {broker_url}")
-            table.add_column("Model ID", style="cyan")
-            table.add_column("Owned By", style="magenta")
+            table.add_column("Model Name (ID)", style="cyan")
+            table.add_column("Source", style="magenta")
             
             for m in models_list:
-                table.add_row(m["id"], m["owned_by"])
+                table.add_row(m["id"], m.get("owned_by", "worker"))
             console.print(table)
         else:
             console.print(f"[bold red]Error:[/bold red] Broker returned {resp.status_code}")
@@ -85,10 +111,9 @@ def clients(ctx: typer.Context):
             table.add_column("IP", style="green")
             table.add_column("User", style="yellow")
             table.add_column("SSH Host", style="blue")
-            table.add_column("Workspace", style="dim")
             
             for c in clients_list:
-                table.add_row(c["ip"], c["ssh_username"], c["ssh_host"], c.get("working_directory", "."))
+                table.add_row(c["ip"], c["ssh_username"], c["ssh_host"])
             console.print(table)
         else:
             console.print(f"[bold red]Error:[/bold red] Broker returned {resp.status_code}")
@@ -133,7 +158,7 @@ def run(
 @app.command()
 def chat(
     ctx: typer.Context,
-    model: str = typer.Option(..., "--model", help="Model ID to use"),
+    model: str = typer.Option(..., "--model", help="Model ID to use (e.g. llama3:latest)"),
     system: str = typer.Option("You are a helpful assistant with access to a Linux terminal.", "--system", help="System prompt"),
 ):
     """Start an interactive chat session with a model through the broker agent loop."""
@@ -154,7 +179,7 @@ def chat(
                 resp = httpx.post(
                     f"{broker_url}/v1/chat/completions",
                     json={"model": model, "messages": messages},
-                    timeout=300.0 # Long timeout for agent loops
+                    timeout=300.0 
                 )
                 
             if resp.status_code == 200:
@@ -162,9 +187,7 @@ def chat(
                 assistant_msg = data["choices"][0]["message"]
                 content = assistant_msg.get("content", "")
                 
-                # Keep history
                 messages.append(assistant_msg)
-                
                 console.print(f"\n[bold yellow]Assistant>[/bold yellow] {content}")
             else:
                 console.print(f"[bold red]Error:[/bold red] Broker returned {resp.status_code}: {resp.text}")

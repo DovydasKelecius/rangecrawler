@@ -8,8 +8,27 @@ import json
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - WORKER - %(message)s")
 logger = logging.getLogger("OllamaWorker")
 
-BROKER_URL = os.getenv("BROKER_URL", "http://localhost:8000")
+BROKER_URL = os.getenv("BROKER_URL", "http://localhost:8005")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+
+def get_effective_broker_url():
+    """Return the broker URL, prioritizing ENV, then state file, then default."""
+    # 1. Check environment variable
+    env_url = os.getenv("BROKER_URL")
+    if env_url:
+        return env_url
+    
+    # 2. Check state file (if mounted or available)
+    state_path = os.path.expanduser("~/.rangecrawler_state.json")
+    if os.path.exists(state_path):
+        try:
+            with open(state_path, "r") as f:
+                state = json.load(f)
+                return state.get("broker_url", "http://localhost:8005")
+        except Exception:
+            pass
+            
+    return "http://localhost:8005"
 
 def fetch_context(ssh, remote_path):
     """Download context.json from the client."""
@@ -253,8 +272,45 @@ def register_worker_key():
         except Exception as e:
             logger.error(f"[-] Error registering worker key: {e}")
 
+def get_reachable_ip():
+    """Find the IP address of this worker that can reach the broker."""
+    try:
+        # Create a dummy socket to see which interface routes to the broker
+        from urllib.parse import urlparse
+        parsed = urlparse(BROKER_URL)
+        if parsed.hostname and parsed.hostname not in ["localhost", "127.0.0.1"]:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect((parsed.hostname, parsed.port or 8005))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+    except Exception:
+        pass
+    
+    # Fallback: check hostname -I
+    try:
+        import subprocess # nosec
+        res = subprocess.check_output(["hostname", "-I"]).decode().split()[0]
+        return res
+    except Exception:
+        return "127.0.0.1"
+
 def worker_loop():
-    logger.info("Worker started in COMMAND + GENERATION mode.")
+    global BROKER_URL
+    import socket
+    BROKER_URL = get_effective_broker_url()
+    
+    # Detect our own IP to report where Ollama is
+    my_ip = get_reachable_ip()
+    my_ollama_url = OLLAMA_URL
+    if "localhost" in OLLAMA_URL or "127.0.0.1" in OLLAMA_URL:
+        # Replace localhost with our actual IP so broker can reach us
+        from urllib.parse import urlparse
+        parsed = urlparse(OLLAMA_URL)
+        my_ollama_url = f"{parsed.scheme}://{my_ip}:{parsed.port or 11434}"
+
+    logger.info(f"Worker started. Broker: {BROKER_URL} | Reporting Ollama at: {my_ollama_url}")
+    
     register_worker_key()
     
     while True:
@@ -262,7 +318,7 @@ def worker_loop():
             # 0. Report available models to broker
             ollama_models = get_ollama_models()
             models_payload = [
-                {"id": m, "remote_url": OLLAMA_URL} 
+                {"id": m, "remote_url": my_ollama_url} 
                 for m in ollama_models
             ]
             try:
