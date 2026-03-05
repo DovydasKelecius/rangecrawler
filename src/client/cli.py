@@ -166,6 +166,15 @@ def chat(
     console.print(Panel(f"[bold blue]Secure Session Started[/bold blue]\n"
                         f"Target: {ip}\nModel: {model}", title="RangeCrawler Chat"))
     
+    # Track the number of messages we've seen to detect new ones
+    last_msg_count = 0
+    try:
+        resp = httpx.get(f"{broker_url}/chat/context/{ip}", timeout=5.0)
+        if resp.status_code == 200:
+            last_msg_count = len(resp.json().get("messages", []))
+    except Exception:
+        pass
+
     while True:
         user_input = console.input("[bold green]User> [/bold green]")
         if user_input.lower() in ["exit", "quit"]:
@@ -174,53 +183,25 @@ def chat(
         try:
             # 1. Trigger the worker by writing to prompt.txt
             write_cmd = f"echo {json.dumps(user_input)} > prompt.txt"
-            resp = httpx.post(
-                f"{broker_url}/command/submit",
-                json={"client_ip": ip, "command": write_cmd},
-                timeout=10.0
-            )
-            
-            if resp.status_code != 200:
-                console.print(f"[bold red]Error submitting prompt: {resp.status_code}[/bold red]")
-                continue
+            httpx.post(f"{broker_url}/command/submit", json={"client_ip": ip, "command": write_cmd}, timeout=10.0)
 
-            # 2. Poll for the worker to finish and update context.json
+            # 2. Poll the BROKER CACHE for the answer
             with console.status(f"[bold blue]Agent is working on {ip}..."):
-                # We know the turn is finished when context.json contains a new assistant message
                 while True:
-                    read_cmd = "cat context.json"
-                    read_resp = httpx.post(
-                        f"{broker_url}/command/submit",
-                        json={"client_ip": ip, "command": read_cmd},
-                        timeout=10.0
-                    )
-                    
-                    if read_resp.status_code == 200:
-                        cmd_id = read_resp.json().get("command_id")
-                        
-                        # Wait for 'cat' command to complete
-                        while True:
-                            stat_resp = httpx.get(f"{broker_url}/command/status/{cmd_id}", timeout=5.0)
-                            if stat_resp.status_code == 200:
-                                d = stat_resp.json()
-                                if d["status"] == "completed":
-                                    try:
-                                        # Parse the JSON from the 'cat' output
-                                        raw_out = d["result"].split("STDOUT:\n")[1].split("\nSTDERR:")[0]
-                                        context = json.loads(raw_out)
-                                        last_msg = context["messages"][-1]
-                                        if last_msg["role"] == "assistant":
-                                            console.print(f"\n[bold yellow]Assistant>[/bold yellow] {last_msg['content']}")
-                                            break 
-                                    except Exception:
-                                        pass
-                            time.sleep(2)
-                            if 'context' in locals() and context["messages"][-1]["role"] == "assistant":
-                                break
-                        
-                        if 'context' in locals() and context["messages"][-1]["role"] == "assistant":
-                            break
-                    time.sleep(3)
+                    time.sleep(2)
+                    try:
+                        resp = httpx.get(f"{broker_url}/chat/context/{ip}", timeout=5.0)
+                        if resp.status_code == 200:
+                            context = resp.json()
+                            messages = context.get("messages", [])
+                            if len(messages) > last_msg_count:
+                                last_msg = messages[-1]
+                                if last_msg["role"] == "assistant":
+                                    console.print(f"\n[bold yellow]Assistant>[/bold yellow] {last_msg['content']}")
+                                    last_msg_count = len(messages)
+                                    break
+                    except Exception:
+                        continue
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {e}")
 

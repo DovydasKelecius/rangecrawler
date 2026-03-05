@@ -31,7 +31,7 @@ async def security_middleware(request: Request, call_next):
     open_paths = [
         "/register", "/register/ssh", "/clients", 
         "/worker/register", "/worker/models", "/health", "/command/submit", 
-        "/command/pending", "/command/result", "/command/status"
+        "/command/pending", "/command/result", "/command/status", "/chat/context"
     ]
     if any(request.url.path.startswith(p) for p in open_paths):
         return await call_next(request)
@@ -132,6 +132,26 @@ async def register_models(request: Request):
     manager.register_models(models)
     
     return {"status": "ok", "registered_count": len(models)}
+
+# --- CHAT CONTEXT CACHE ---
+# In-memory store for the latest context.json of each client.
+# This avoids constant SSH 'cat' commands from the CLI.
+context_cache: Dict[str, Any] = {}
+
+@app.post("/chat/context/{client_ip}")
+async def update_chat_context(client_ip: str, request: Request):
+    """Worker pushes the latest context for a client here."""
+    body = await request.json()
+    context_cache[client_ip] = body
+    return {"status": "ok"}
+
+@app.get("/chat/context/{client_ip}")
+async def get_chat_context(client_ip: str):
+    """Client CLI polls this to see if the AI has finished."""
+    context = context_cache.get(client_ip)
+    if not context:
+        return JSONResponse(status_code=404, content={"detail": "No context found for this client."})
+    return context
 
 @app.post("/command/submit")
 async def submit_command(request: Request):

@@ -394,6 +394,12 @@ def process_generation_request(client_config, model="llama3"):
                 context["messages"].append(response_msg)
                 push_context(ssh, remote_path, context)
                 logger.info(f"[SUCCESS] Agent session finished on {ssh_host}.")
+                
+                # Push to broker cache so CLI can see it instantly
+                try:
+                    httpx.post(f"{BROKER_URL}/chat/context/{client_config['ip']}", json=context, timeout=5.0)
+                except Exception as e:
+                    logger.warning(f"Failed to push context to broker: {e}")
         
     except Exception as e:
         logger.error(f"Generation cycle failed for {ssh_host}: {e}")
