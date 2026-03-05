@@ -70,17 +70,17 @@ def get_worker_pkey():
             except Exception as e:
                 logger.debug(f"Failed to load key from {path}: {e}")
 
-    # No key found? Generate a new one (Ed25519 is preferred)
-    logger.info("No SSH keys found. Generating a new Ed25519 key pair...")
-    new_key_path = "/root/.ssh/id_ed25519"
+    # No key found? Generate a new one (RSA is the most compatible fallback)
+    logger.info("No SSH keys found. Generating a new RSA key pair...")
+    new_key_path = "/root/.ssh/id_rsa"
     try:
         os.makedirs(os.path.dirname(new_key_path), exist_ok=True)
-        key = paramiko.Ed25519Key.generate()
+        key = paramiko.RSAKey.generate(4096)
         key.write_private_key_file(new_key_path)
         # Also write the public key file for consistency
         with open(f"{new_key_path}.pub", "w") as f:
             f.write(f"{key.get_name()} {key.get_base64()}")
-        logger.info(f"Successfully generated and saved new key to {new_key_path}")
+        logger.info(f"Successfully generated and saved new RSA key to {new_key_path}")
         return key
     except Exception as e:
         logger.error(f"Failed to generate worker key: {e}")
