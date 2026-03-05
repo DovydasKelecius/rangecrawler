@@ -266,12 +266,18 @@ class ModelManager:
         self.sessions: Dict[str, SessionStats] = {}
         self.tunnels: Dict[str, SSHTunnelForwarder] = {}
         self.logger = logging.getLogger("ModelManager")
-        self.db_path = config.broker.database_path
+        
+        # Ensure database path is absolute
+        self.db_path = str(Path(config.broker.database_path).resolve())
         self._init_db()
         
         # Base local workspace directory
         self.workspace_base = Path(config.agent.working_directory).resolve()
         self.workspace_base.mkdir(parents=True, exist_ok=True)
+
+    def get_db(self):
+        """Returns a database connection."""
+        return sqlite3.connect(self.db_path)
 
     def register_models(self, models: List[ModelConfig]):
         """Register or update models reported by a worker."""
@@ -283,14 +289,17 @@ class ModelManager:
     def _init_db(self):
         db_file = Path(self.db_path)
         if db_file.is_dir():
-            raise IsADirectoryError(f"Database path {self.db_path} is a directory, but a file is expected. "
-                                    "If using Docker, ensure you 'touch' the file on the host before mounting.")
+            raise IsADirectoryError(
+                f"Database path '{self.db_path}' is a directory, but a file is expected.\n"
+                "FIX: On your VM host, run 'mkdir -p data' and ensure config.yaml has "
+                "database_path: \"data/rangecrawler.db\""
+            )
         
         # Ensure parent directory exists
         db_file.parent.mkdir(parents=True, exist_ok=True)
         
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self.get_db()
             cursor = conn.cursor()
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS allowed_ips (
@@ -334,7 +343,7 @@ class ModelManager:
             return self.workspace_configs[ip]
         
         # 2. Check Database for dynamically registered SSH workspaces
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT ssh_host, ssh_port, ssh_username, ssh_pkey_path, working_directory, ssh_host_key FROM allowed_ips WHERE ip = ? AND ssh_host IS NOT NULL", (ip,))
         row = cursor.fetchone()
@@ -366,7 +375,7 @@ class ModelManager:
 
     def register_ip(self, ip: str, ssh_config: Optional[AgentWorkspaceConfig] = None) -> bool:
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self.get_db()
             cursor = conn.cursor()
             
             if ssh_config:
@@ -399,7 +408,7 @@ class ModelManager:
             return False
 
     def is_allowed(self, ip: str) -> bool:
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT ip FROM allowed_ips WHERE ip = ?", (ip,))
         result = cursor.fetchone()

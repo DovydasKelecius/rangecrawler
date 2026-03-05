@@ -85,7 +85,7 @@ async def register_ssh(request: Request):
         manager.register_ip(client_ip, ssh_config=ssh_cfg)
         
         # Return the latest worker public key to the client for automatic authorization
-        conn = sqlite3.connect(manager.db_path)
+        conn = manager.get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT public_key FROM worker_keys ORDER BY last_seen DESC LIMIT 1")
         row = cursor.fetchone()
@@ -112,10 +112,10 @@ async def register_worker(request: Request):
     if not public_key:
         raise HTTPException(status_code=400, detail="Missing public_key")
     
-    conn = sqlite3.connect(manager.db_path)
+    conn = manager.get_db()
     cursor = conn.cursor()
-    # Use OR REPLACE to ensure we don't pile up old keys
-    cursor.execute("INSERT OR REPLACE INTO worker_keys (public_key) VALUES (?)", (public_key,))
+    # Use a fixed ID of 1 to ensure we only ever have ONE active worker key
+    cursor.execute("INSERT OR REPLACE INTO worker_keys (id, public_key, last_seen) VALUES (1, ?, CURRENT_TIMESTAMP)", (public_key,))
     conn.commit()
     conn.close()
     
@@ -143,7 +143,7 @@ async def submit_command(request: Request):
     if not client_ip or not command:
         raise HTTPException(status_code=400, detail="Missing client_ip or command")
     
-    conn = sqlite3.connect(manager.db_path)
+    conn = manager.get_db()
     cursor = conn.cursor()
     cursor.execute("INSERT INTO command_queue (client_ip, command) VALUES (?, ?)", (client_ip, command))
     command_id = cursor.lastrowid
@@ -155,7 +155,7 @@ async def submit_command(request: Request):
 @app.get("/command/pending/{client_ip}")
 async def get_pending_commands(client_ip: str):
     """Fetch pending commands for a specific client."""
-    conn = sqlite3.connect(manager.db_path)
+    conn = manager.get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT id, command FROM command_queue WHERE client_ip = ? AND status = 'pending'", (client_ip,))
     rows = cursor.fetchall()
@@ -170,7 +170,7 @@ async def post_command_result(request: Request):
     command_id = body.get("command_id")
     result = body.get("result")
     
-    conn = sqlite3.connect(manager.db_path)
+    conn = manager.get_db()
     cursor = conn.cursor()
     cursor.execute("UPDATE command_queue SET status = 'completed', result = ? WHERE id = ?", (result, command_id))
     conn.commit()
@@ -181,7 +181,7 @@ async def post_command_result(request: Request):
 @app.get("/command/status/{command_id}")
 async def get_command_status(command_id: int):
     """Get the status and result of a specific command."""
-    conn = sqlite3.connect(manager.db_path)
+    conn = manager.get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT status, result, command FROM command_queue WHERE id = ?", (command_id,))
     row = cursor.fetchone()
@@ -321,7 +321,7 @@ async def chat_completions(request: Request, response: Response):
 @app.get("/clients")
 async def list_clients():
     """Returns a list of all registered clients for the worker to poll."""
-    conn = sqlite3.connect(manager.db_path)
+    conn = manager.get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT ip, ssh_host, ssh_port, ssh_username, ssh_pkey_path, working_directory, ssh_host_key FROM allowed_ips WHERE ssh_host IS NOT NULL")
     rows = cursor.fetchall()
