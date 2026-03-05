@@ -53,20 +53,38 @@ def get_effective_broker_url():
     return "http://localhost:8005"
 
 def get_worker_pkey():
-    """Try to load the worker's private key from common locations."""
+    """Try to load the worker's private key, or generate one if missing."""
     key_paths = [
-        ("/root/.ssh/id_rsa", paramiko.RSAKey),
         ("/root/.ssh/id_ed25519", paramiko.Ed25519Key),
-        (os.path.expanduser("~/.ssh/id_rsa"), paramiko.RSAKey),
+        ("/root/.ssh/id_rsa", paramiko.RSAKey),
         (os.path.expanduser("~/.ssh/id_ed25519"), paramiko.Ed25519Key),
+        (os.path.expanduser("~/.ssh/id_rsa"), paramiko.RSAKey),
     ]
+    
     for path, key_class in key_paths:
         if os.path.exists(path):
             try:
-                return key_class.from_private_key_file(path)
+                key = key_class.from_private_key_file(path)
+                logger.info(f"Loaded worker private key from {path}")
+                return key
             except Exception as e:
                 logger.debug(f"Failed to load key from {path}: {e}")
-    return None
+
+    # No key found? Generate a new one (Ed25519 is preferred)
+    logger.info("No SSH keys found. Generating a new Ed25519 key pair...")
+    new_key_path = "/root/.ssh/id_ed25519"
+    try:
+        os.makedirs(os.path.dirname(new_key_path), exist_ok=True)
+        key = paramiko.Ed25519Key.generate()
+        key.write_private_key_file(new_key_path)
+        # Also write the public key file for consistency
+        with open(f"{new_key_path}.pub", "w") as f:
+            f.write(f"{key.get_name()} {key.get_base64()}")
+        logger.info(f"Successfully generated and saved new key to {new_key_path}")
+        return key
+    except Exception as e:
+        logger.error(f"Failed to generate worker key: {e}")
+        return None
 
 def fetch_context(ssh, remote_path):
     """Download context.json from the client."""
@@ -292,35 +310,23 @@ def execute_remote_command(client_config, command_id, command):
 
 def register_worker_key():
     """Read local public key and send it to the broker."""
-    pub_key_paths = [
-        "/root/.ssh/id_rsa.pub",
-        "/root/.ssh/id_ed25519.pub",
-        os.path.expanduser("~/.ssh/id_rsa.pub"),
-        os.path.expanduser("~/.ssh/id_ed25519.pub"),
-    ]
+    # Ensure we have a key first
+    pkey = get_worker_pkey()
+    if not pkey:
+        logger.error("Cannot register worker: No private key available.")
+        return
+
+    pub_key = f"{pkey.get_name()} {pkey.get_base64()}"
+    logger.info(f"Registering worker public key: {pub_key[:30]}...")
     
-    pub_key = None
-    for path in pub_key_paths:
-        if os.path.exists(path):
-            try:
-                with open(path, "r") as f:
-                    pub_key = f.read().strip()
-                logger.debug(f"Found worker public key at {path}")
-                break
-            except Exception:
-                continue
-    
-    if pub_key:
-        try:
-            resp = httpx.post(f"{BROKER_URL}/worker/register", json={"public_key": pub_key}, timeout=10.0)
-            if resp.status_code == 200:
-                logger.info("[+] Registered worker public key with broker.")
-            else:
-                logger.error(f"[-] Failed to register worker key: {resp.status_code}")
-        except Exception as e:
-            logger.error(f"[-] Error registering worker key: {e}")
-    else:
-        logger.warning("No worker public key found to register. Remote access might fail.")
+    try:
+        resp = httpx.post(f"{BROKER_URL}/worker/register", json={"public_key": pub_key}, timeout=10.0)
+        if resp.status_code == 200:
+            logger.info("[+] Registered worker public key with broker.")
+        else:
+            logger.error(f"[-] Failed to register worker key: {resp.status_code}")
+    except Exception as e:
+        logger.error(f"[-] Error registering worker key: {e}")
 
 def get_reachable_ip():
     """Find the IP address of this worker that can reach the broker."""
