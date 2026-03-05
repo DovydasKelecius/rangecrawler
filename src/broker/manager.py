@@ -6,7 +6,7 @@ import sqlite3
 import paramiko  # type: ignore[import-untyped]
 import shlex
 from datetime import datetime
-from typing import Dict, Union, Optional
+from typing import Dict, Union, Optional, List
 from pathlib import Path
 from urllib.parse import urlparse
 from sshtunnel import SSHTunnelForwarder # type: ignore[import-untyped]
