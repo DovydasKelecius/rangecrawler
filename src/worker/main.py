@@ -361,10 +361,8 @@ def process_generation_request(client_config, model="llama3"):
     pkey = get_worker_pkey()
 
     try:
-        # Optimization: Check if client even wants a generation before connecting?
-        # For now, we still connect to check prompt.txt as per original requirement.
-        logger.debug(f"Checking for generation request on {ssh_host}...")
-        logger.debug(f"Connecting with user={ssh_user}, pkey={'Provided' if pkey else 'None'}, look_for_keys=True")
+        # Connect silently (DEBUG level only)
+        logger.debug(f"Connecting to {ssh_host} to check for prompts...")
         ssh.connect(
             hostname=ssh_host, 
             port=ssh_port, 
@@ -379,15 +377,17 @@ def process_generation_request(client_config, model="llama3"):
         sftp = ssh.open_sftp()
         prompt = None
         try:
+            # CD into the remote workspace to find prompt.txt
+            ssh.exec_command(f"mkdir -p {remote_path}") # Ensure it exists
             prompt_file = os.path.join(remote_path, "prompt.txt")
+            
             try:
                 with sftp.open(prompt_file, "r") as f:
                     prompt = f.read().strip()
                 if prompt:
                     logger.info(f"[RECEIVED] New prompt from {ssh_host}: \"{prompt[:50]}...\"")
-                    # Delete prompt file after reading to avoid re-processing
                     sftp.remove(prompt_file)
-            except FileNotFoundError:
+            except (FileNotFoundError, IOError):
                 pass
         finally:
             sftp.close()
@@ -456,7 +456,7 @@ def execute_remote_command(client_config, command_id, command):
         error = stderr.read().decode().strip()
         
         combined_result = f"STDOUT:\n{output}\nSTDERR:\n{error}"
-        logger.info(f"[DONE] Command {command_id} finished on {ssh_host}.")
+        logger.debug(f"[DONE] Command {command_id} finished on {ssh_host}.")
         
         # Report back to broker
         httpx.post(f"{BROKER_URL}/command/result", json={
@@ -485,16 +485,17 @@ def register_worker_key():
         return
 
     pub_key = f"{pkey.get_name()} {pkey.get_base64()}"
-    logger.info(f"Registering worker public key: {pub_key[:30]}...")
-    
-    try:
-        resp = httpx.post(f"{BROKER_URL}/worker/register", json={"public_key": pub_key}, timeout=10.0)
-        if resp.status_code == 200:
-            logger.info("[+] Registered worker public key with broker.")
-        else:
-            logger.error(f"[-] Failed to register worker key: {resp.status_code}")
-    except Exception as e:
-        logger.error(f"[-] Error registering worker key: {e}")
+    logger.debug(f"Registering worker public key: {pub_key[:30]}...")
+    if pub_key:
+        try:
+            resp = httpx.post(f"{BROKER_URL}/worker/register", json={"public_key": pub_key}, timeout=10.0)
+            if resp.status_code == 200:
+                logger.debug("Registered worker public key with broker.")
+            else:
+                logger.error(f"[-] Failed to register worker key: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"[-] Error registering worker key: {e}")
+
 
 def get_reachable_ip():
     """Find the IP address of this worker that can reach the broker."""
@@ -580,7 +581,7 @@ def worker_loop():
                         cmds_data = cmd_resp.json()
                         cmds = cmds_data.get("commands", [])
                         if cmds:
-                            logger.info(f"Found {len(cmds)} pending commands for {client_ip}")
+                            logger.debug(f"Found {len(cmds)} pending commands for {client_ip}")
                         for cmd in cmds:
                             execute_remote_command(client, cmd["id"], cmd["command"])
                     
