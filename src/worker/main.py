@@ -341,7 +341,7 @@ def worker_agent_loop(ssh, remote_path, model, messages):
             
     return {"role": "assistant", "content": "Error: Max iterations reached in worker agent loop."}
 
-def process_generation_request(client_config, model="llama3"):
+def process_generation_request(client_config):
     """Full cycle: Connect -> Sync Context -> Generate -> Push Context."""
     if not client_config:
         logger.error("process_generation_request called with None client_config")
@@ -357,47 +357,55 @@ def process_generation_request(client_config, model="llama3"):
     host_key = client_config.get("ssh_host_key")
     
     setup_host_key(ssh, ssh_host, host_key)
-    
     pkey = get_worker_pkey()
 
     try:
         # Connect silently (DEBUG level only)
         logger.debug(f"Connecting to {ssh_host} to check for prompts...")
         ssh.connect(
-            hostname=ssh_host, 
-            port=ssh_port, 
-            username=ssh_user, 
-            pkey=pkey, 
-            timeout=5,
-            banner_timeout=5,
-            allow_agent=True,
-            look_for_keys=True
+            hostname=ssh_host, port=ssh_port, username=ssh_user, 
+            pkey=pkey, timeout=5, banner_timeout=5,
+            allow_agent=True, look_for_keys=True
         )
         
         sftp = ssh.open_sftp()
-        prompt = None
+        instruction = None
         try:
-            # CD into the remote workspace to find prompt.txt
-            ssh.exec_command(f"mkdir -p {remote_path}") # Ensure it exists
-            prompt_file = os.path.join(remote_path, "prompt.txt")
-            
+            # Check for modern instruction.json
+            instr_file = os.path.join(remote_path, "instruction.json")
             try:
-                with sftp.open(prompt_file, "r") as f:
-                    content = f.read()
-                    # SFTP read returns bytes, must decode to string
-                    prompt = content.decode("utf-8").strip() if content else None
-                
-                if prompt:
-                    logger.info(f"[RECEIVED] New prompt from {ssh_host}: \"{prompt[:50]}...\"")
-                    sftp.remove(prompt_file)
-            except (FileNotFoundError, IOError):
+                with sftp.open(instr_file, "r") as f:
+                    raw_content = f.read()
+                    if raw_content:
+                        instruction = json.loads(raw_content.decode("utf-8"))
+                if instruction:
+                    logger.info(f"[RECEIVED] New request for {instruction.get('model')} from {ssh_host}")
+                    sftp.remove(instr_file)
+            except (FileNotFoundError, IOError, json.JSONDecodeError):
                 pass
+            
+            # Fallback to old prompt.txt if no instruction.json
+            if not instruction:
+                prompt_file = os.path.join(remote_path, "prompt.txt")
+                try:
+                    with sftp.open(prompt_file, "r") as f:
+                        raw_content = f.read()
+                        if raw_content:
+                            prompt_text = raw_content.decode("utf-8").strip()
+                            instruction = {"model": "llama3", "prompt": prompt_text}
+                    if instruction:
+                        sftp.remove(prompt_file)
+                except (FileNotFoundError, IOError):
+                    pass
         finally:
             sftp.close()
 
-        if prompt:
+        if instruction:
+            prompt = instruction.get("prompt")
+            model = instruction.get("model", "llama3")
+            
             context = fetch_context(ssh, remote_path)
-            context["messages"].append({"role": "user", "content": prompt})
+            context["messages"].append({"role": "user", "content": str(prompt)})
             
             # Run the full agent loop locally on the worker
             response_msg = worker_agent_loop(ssh, remote_path, model, context["messages"])

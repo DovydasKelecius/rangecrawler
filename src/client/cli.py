@@ -181,8 +181,14 @@ def chat(
             break
         
         try:
-            # 1. Trigger the worker by writing to prompt.txt
-            write_cmd = f"echo {json.dumps(user_input)} > prompt.txt"
+            # 1. Trigger the worker by writing to instruction.json
+            # This allows us to pass the model choice to the worker
+            instruction = {"model": model, "prompt": user_input}
+            # We use a base64-encoded echo to avoid any bash quoting issues
+            import base64
+            instr_b64 = base64.b64encode(json.dumps(instruction).encode()).decode()
+            write_cmd = f"echo {instr_b64} | base64 -d > instruction.json"
+            
             httpx.post(f"{broker_url}/command/submit", json={"client_ip": ip, "command": write_cmd}, timeout=10.0)
 
             # 2. Poll the BROKER CACHE for the answer
