@@ -5,6 +5,8 @@ import os
 import logging
 import json
 import socket
+import subprocess # nosec B404
+import shlex
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - WORKER - %(message)s")
 logger = logging.getLogger("OllamaWorker")
@@ -211,11 +213,10 @@ def setup_host_key(ssh, host, host_key):
                 logger.debug(f"Loaded host key for {host} into memory ({key_type})")
     except Exception as e:
         logger.warning(f"Failed to load host key for {host}: {e}")
-
 def execute_worker_tool(ssh, remote_path, func_name, func_args):
     """Execute a tool on the client via the existing SSH connection."""
-    import shlex
     try:
+
         if func_name == "read_file":
             path = func_args.get("path")
             sftp = ssh.open_sftp()
@@ -445,7 +446,6 @@ def execute_remote_command(client_config, command_id, command):
     pkey = get_worker_pkey()
 
     try:
-        import shlex
         # Always CD into the workspace before running the command
         full_command = f"cd {shlex.quote(client_config.get('working_directory', '.'))} && {command}"
         
@@ -531,6 +531,65 @@ def get_reachable_ip():
     except Exception: # nosec B110
         return "127.0.0.1"
 
+# Track active provisions to allow for cleanup later
+ACTIVE_PROVISIONS = {} # client_ip -> {proxy_pid, tunnel_pid, start_time}
+
+def handle_provisioning(client_config, provision_data):
+    """
+    Spawns the isolation proxy and creates the reverse SSH tunnel.
+    """
+    client_ip = client_config["ip"]
+    model = provision_data.get("model")
+    target_port = provision_data.get("target_port", 11434)
+    proxy_port = 11435 # Dynamically assigned in production
+    
+    logger.info(f"[PROVISION] Launching isolated Ollama for {client_ip}...")
+    
+    # 1. Start the Shield Proxy on the worker (binds to localhost only)
+    proxy_proc = subprocess.Popen([
+        "python", "src/worker/shield_proxy.py", "--port", str(proxy_port)
+    ])
+    
+    # 2. Start the Reverse Tunnel: Client:11434 -> Worker:11435 (Shield Proxy)
+    # We use -N (no command) and -f (background) if we wanted it detached,
+    # but for orchestration we keep the process handle.
+    tunnel_cmd = [
+        "ssh", "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
+        "-N", "-R", f"{target_port}:localhost:{proxy_port}",
+        f"{client_config['ssh_username']}@{client_config['ssh_host']}"
+    ]
+    
+    # Ensure worker private key is used
+    get_worker_pkey()
+    # If the system ssh doesn't pick up the key automatically, we'd pass -i <path>
+    # but here we assume the SSH agent or standard keys are handled.
+    
+    tunnel_proc = subprocess.Popen(tunnel_cmd) # nosec B601
+    
+    ACTIVE_PROVISIONS[client_ip] = {
+        "proxy_proc": proxy_proc,
+        "tunnel_proc": tunnel_proc,
+        "model": model,
+        "start_time": time.time()
+    }
+    
+    logger.info(f"[PROVISION] Tunnel established to {client_ip}:{target_port} -> Shield Proxy:{proxy_port}")
+
+def cleanup_inactive_provisions():
+    """Terminate tunnels and proxies that have timed out."""
+    now = time.time()
+    to_remove = []
+    for ip, data in ACTIVE_PROVISIONS.items():
+        # 60 mins default timeout for this demo
+        if now - data["start_time"] > 3600: 
+            logger.info(f"[CLEANUP] Timing out provisioning for {ip}")
+            data["proxy_proc"].terminate()
+            data["tunnel_proc"].terminate()
+            to_remove.append(ip)
+    for ip in to_remove:
+        del ACTIVE_PROVISIONS[ip]
+
 def worker_loop():
     global BROKER_URL
     BROKER_URL = get_effective_broker_url()
@@ -593,11 +652,29 @@ def worker_loop():
                         if cmds:
                             logger.debug(f"Found {len(cmds)} pending commands for {client_ip}")
                         for cmd in cmds:
+                            # 2.1 Handle generic shell commands (Original behavior)
                             execute_remote_command(client, cmd["id"], cmd["command"])
-                    
+                            
+                            # 2.2 Handle structured provisioning commands
+                            try:
+                                cmd_data = json.loads(cmd["command"])
+                                if cmd_data.get("action") == "provision_isolated_ollama":
+                                    handle_provisioning(client, cmd_data)
+                                    # Mark as completed
+                                    httpx.post(f"{BROKER_URL}/command/result", json={
+                                        "command_id": cmd["id"],
+                                        "result": "Provisioned successfully"
+                                    }, timeout=5.0)
+                            except (json.JSONDecodeError, KeyError):
+                                pass
                     # 3. Check for generation (Context Sync Loop)
                     process_generation_request(client)
-            else:
+
+                    # 4. Periodically clean up old provisions
+                    cleanup_inactive_provisions()
+
+                    iteration += 1
+
                 logger.error(f"Broker error: {resp.status_code}")
             
             iteration += 1

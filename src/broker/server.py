@@ -9,6 +9,7 @@ from typing import Dict, Any, List
 from datetime import datetime
 
 from .manager import ModelManager, AGENT_TOOLS, LocalTools
+from .models import OllamaProvisionRequest
 from .config import load_config
 
 # Initialize configuration and manager
@@ -382,4 +383,52 @@ async def list_models():
     return {
         "object": "list",
         "data": [{"id": mid, "object": "model", "owned_by": "rangecrawler"} for mid in manager.allowed_models.keys()]
+    }
+
+@app.post("/v1/request-ollama")
+async def request_ollama_provisioning(request: Request, body: OllamaProvisionRequest):
+    """
+    Client VM requests a localized Ollama API tunnel.
+    The Broker assigns this to a worker and enqueues a provisioning command.
+    """
+    client_ip = request.client.host if request.client else None
+    if not client_ip or not manager.is_allowed(client_ip):
+        raise HTTPException(status_code=403, detail="Client IP not authorized.")
+    
+    # 1. Select the 'best' worker. For now, we take the first worker that reported models.
+    # In a real cyber range, this would involve VRAM/load balancing.
+    worker_models = list(manager.allowed_models.values())
+    if not worker_models:
+        raise HTTPException(status_code=503, detail="No workers currently available.")
+    
+    # Identify target client config (SSH details)
+    client_cfg = manager.get_workspace_context(client_ip)
+    from .models import AgentWorkspaceConfig
+    if not isinstance(client_cfg, AgentWorkspaceConfig):
+        raise HTTPException(status_code=400, detail="Client machine must be registered via SSH agent to use tunnels.")
+
+    # 2. Build the command payload
+    provision_cmd = {
+        "action": "provision_isolated_ollama",
+        "model": body.model,
+        "timeout": body.timeout_minutes,
+        "client_ip": client_ip,
+        "target_port": 11434 # The port on the CLIENT machine
+    }
+    
+    # 3. Queue the command for the worker to pick up
+    conn = manager.get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO command_queue (client_ip, command) VALUES (?, ?)",
+        (client_ip, json.dumps(provision_cmd))
+    )
+    conn.commit()
+    conn.close()
+    
+    logger.info(f"[PROVISION] Queued Ollama {body.model} for {client_ip}")
+    return {
+        "status": "accepted",
+        "message": f"Inference provision for {body.model} is starting. Access will be via localhost:11434 on your VM shortly.",
+        "model": body.model
     }

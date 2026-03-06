@@ -45,3 +45,7 @@ class SessionStats(BaseModel):
     token_usage: int = 0
     start_time: datetime = Field(default_factory=datetime.now)
     last_active: datetime = Field(default_factory=datetime.now)
+
+class OllamaProvisionRequest(BaseModel):
+    model: str
+    timeout_minutes: int = 30
