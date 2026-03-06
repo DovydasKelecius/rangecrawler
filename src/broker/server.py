@@ -2,7 +2,6 @@ import httpx
 import logging
 import json
 import asyncio
-import sqlite3
 import os
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import JSONResponse

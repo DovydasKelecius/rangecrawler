@@ -3,7 +3,7 @@ import typer
 import time
 import json
 import os
-from typing import Optional, List
+from typing import Optional
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -20,7 +20,7 @@ def load_state():
         try:
             with open(STATE_FILE, "r") as f:
                 return json.load(f)
-        except Exception:
+        except Exception: # nosec B110
             pass
     return {"broker_url": "http://localhost:8005"}
 
@@ -140,7 +140,7 @@ def run(
             console.print(f"[bold green]✓[/bold green] Command submitted (ID: {cmd_id})")
             
             if wait:
-                with console.status("[bold blue]Waiting for result...") as status:
+                with console.status("[bold blue]Waiting for result...") as _:
                     while True:
                         status_resp = httpx.get(f"{broker_url}/command/status/{cmd_id}", timeout=5.0)
                         if status_resp.status_code == 200:
@@ -172,9 +172,8 @@ def chat(
         resp = httpx.get(f"{broker_url}/chat/context/{ip}", timeout=5.0)
         if resp.status_code == 200:
             last_msg_count = len(resp.json().get("messages", []))
-    except Exception:
+    except Exception: # nosec B110
         pass
-
     while True:
         user_input = console.input("[bold green]User> [/bold green]")
         if user_input.lower() in ["exit", "quit"]:
@@ -206,7 +205,7 @@ def chat(
                                     console.print(f"\n[bold yellow]Assistant>[/bold yellow] {last_msg['content']}")
                                     last_msg_count = len(messages)
                                     break
-                    except Exception:
+                    except Exception: # nosec B112
                         continue
         except Exception as e:
             console.print(f"[bold red]Error:[/bold red] {e}")

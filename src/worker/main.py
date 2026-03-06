@@ -95,11 +95,11 @@ def get_effective_broker_url():
                 broker_cfg = data.get("broker", {})
                 host = broker_cfg.get("host", "localhost")
                 # If host is 0.0.0.0, we can't use it as a target
-                if host == "0.0.0.0":
+                if host == "0.0.0.0": # nosec B104
                     host = "localhost"
                 port = broker_cfg.get("default_port", 8005)
                 return f"http://{host}:{port}"
-        except Exception:
+        except Exception: # nosec B110
             pass
 
     # 3. Check state file
@@ -109,7 +109,7 @@ def get_effective_broker_url():
             with open(state_path, "r") as f:
                 state = json.load(f)
                 return state.get("broker_url", "http://localhost:8005")
-        except Exception:
+        except Exception: # nosec B110
             pass
             
     return "http://localhost:8005"
@@ -235,7 +235,7 @@ def execute_worker_tool(ssh, remote_path, func_name, func_args):
                 # Create directories
                 remote_dir = os.path.dirname(full_path)
                 if remote_dir:
-                    ssh.exec_command(f"mkdir -p {shlex.quote(remote_dir)}")
+                    ssh.exec_command(f"mkdir -p {shlex.quote(remote_dir)}") # nosec B601
                 with sftp.open(full_path, "w") as f:
                     f.write(content)
                 return f"Success: Wrote to {path}"
@@ -255,7 +255,7 @@ def execute_worker_tool(ssh, remote_path, func_name, func_args):
             command = func_args.get("command")
             timeout = func_args.get("timeout", 30)
             full_cmd = f"cd {shlex.quote(remote_path)} && {command}"
-            stdin, stdout, stderr = ssh.exec_command(full_cmd, timeout=timeout)
+            stdin, stdout, stderr = ssh.exec_command(full_cmd, timeout=timeout) # nosec B601
             return stdout.read().decode() + stderr.read().decode()
 
         return f"Error: Tool {func_name} not implemented in worker."
@@ -461,8 +461,8 @@ def execute_remote_command(client_config, command_id, command):
             look_for_keys=True
         )
         
-        stdin, stdout, stderr = ssh.exec_command(full_command) # nosec
-        
+        stdin, stdout, stderr = ssh.exec_command(full_command) # nosec B601
+
         output = stdout.read().decode().strip()
         error = stderr.read().decode().strip()
         
@@ -520,20 +520,19 @@ def get_reachable_ip():
             ip = s.getsockname()[0]
             s.close()
             return ip
-    except Exception:
+    except Exception: # nosec B110
         pass
     
     # Fallback: check hostname -I
     try:
-        import subprocess # nosec
-        res = subprocess.check_output(["hostname", "-I"]).decode().split()[0]
+        import subprocess # nosec B404
+        res = subprocess.check_output(["hostname", "-I"]).decode().split()[0] # nosec B603 B607
         return res
-    except Exception:
+    except Exception: # nosec B110
         return "127.0.0.1"
 
 def worker_loop():
     global BROKER_URL
-    import socket
     BROKER_URL = get_effective_broker_url()
     
     # Detect our own IP to report where Ollama is

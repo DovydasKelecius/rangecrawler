@@ -6,7 +6,7 @@ import platform
 import getpass
 import argparse
 import time
-import subprocess
+import subprocess # nosec B404
 from typing import Optional
 
 logger = logging.getLogger(__name__)

@@ -5,6 +5,7 @@ import logging
 import os
 from typing import Optional
 from src.broker.config import load_config
+from src.client.cli import app as client_app
 
 app = typer.Typer(
     help="RangeCrawler: A professional LLM brokerage and agent orchestration system.",
@@ -101,7 +102,7 @@ def agent(
             state["broker_url"] = broker_url
             save_state(state)
             typer.echo(f"[*] Broker URL {broker_url} saved for client CLI.")
-        except Exception:
+        except Exception: # nosec B110
             pass
     else:
         raise typer.Exit(code=1)
@@ -135,7 +136,6 @@ def dashboard(
     typer.echo(f"Starting Dashboard on {host}:{port}")
     uvicorn.run("src.dashboard.app:app", host=host, port=port, reload=reload)
 
-from src.client.cli import app as client_app
 app.add_typer(client_app, name="client")
 
 if __name__ == "__main__":
