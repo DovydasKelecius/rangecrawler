@@ -6,6 +6,7 @@ import platform
 import getpass
 import argparse
 import time
+import subprocess # nosec B404
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,6 @@ class RangeCrawlerAgent:
         if "127.0.0.1" in self.broker_url or "localhost" in self.broker_url:
             # Try to find the gateway IP of the network we are actually using
             try:
-                import subprocess # nosec
                 # Look for the IP address on the bridge interface that routes to the broker.
                 # Avoid shell=True for security.
                 route_cmd = ["ip", "route", "get", "1.1.1.1"]
@@ -51,7 +51,7 @@ class RangeCrawlerAgent:
                 for part in route_output.split():
                     if part.startswith("172."):
                         return part
-            except (subprocess.SubprocessError, ImportError, IndexError):
+            except (subprocess.SubprocessError, IndexError):
                 logger.debug("Failed to detect Docker gateway IP via ip route")
             
             return "172.18.0.1" 
@@ -68,30 +68,38 @@ class RangeCrawlerAgent:
         return ip
 
     def authorize_worker(self, public_key: str):
-        """Add the worker's public key to authorized_keys."""
+        """Add the worker's public key to authorized_keys with strict permissions."""
         if not public_key:
             return
         
         # Use the actual home directory of the registration user
         if self.username == "root":
-            auth_keys_path = "/root/.ssh/authorized_keys"
+            ssh_dir = "/root/.ssh"
         else:
-            auth_keys_path = os.path.expanduser("~/.ssh/authorized_keys")
+            ssh_dir = os.path.expanduser(f"~{self.username}/.ssh")
+            if not os.path.exists(ssh_dir):
+                ssh_dir = os.path.expanduser("~/.ssh")
             
-        os.makedirs(os.path.dirname(auth_keys_path), exist_ok=True)
+        auth_keys_path = os.path.join(ssh_dir, "authorized_keys")
+            
+        # Ensure .ssh exists with 700
+        if not os.path.exists(ssh_dir):
+            os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+        else:
+            os.chmod(ssh_dir, 0o700)
         
         # Check if already exists
         if os.path.exists(auth_keys_path):
             with open(auth_keys_path, "r") as f:
                 if public_key in f.read():
-                    print("[*] Worker key already authorized.")
+                    print(f"[*] Worker key already authorized in {auth_keys_path}")
                     return
         
         with open(auth_keys_path, "a") as f:
             f.write(f"\n{public_key}\n")
         
         os.chmod(auth_keys_path, 0o600)
-        print(f"[+] Automatically authorized worker public key for user {self.username}.")
+        print(f"[+] Authorized worker key ({public_key[:20]}...) in {auth_keys_path}")
 
     def register_self(self, ssh_port: int = 22, pkey_path: Optional[str] = None):
         """Register this machine as a remote workspace on the broker."""

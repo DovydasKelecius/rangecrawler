@@ -11,18 +11,18 @@ services:
         "--host",
         "0.0.0.0",
         "--port",
-        "8000",
+        "8005",
       ]
     profiles: ["broker", "all"]
     ports:
-      - "8000:8000"
+      - "8005:8005"
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./src:/app/src
-      - ./rangecrawler.db:/app/rangecrawler.db
+      - ./data:/app/data
     environment:
       - PYTHONPATH=/app
-      - GEMINI_API_KEY
+      - RANGECRAWLER_CONFIG=config.yaml
 
   # The Ollama Worker (Orchestrator)
   worker:
@@ -35,5 +35,5 @@ services:
       - ~/.ssh:/root/.ssh:ro
     environment:
       - PYTHONPATH=/app
-      - BROKER_URL=${BROKER_URL:-http://localhost:8000}
+      - BROKER_URL=${BROKER_URL:-http://10.1.0.129:8005}
       - OLLAMA_URL=${OLLAMA_URL:-http://localhost:11434}

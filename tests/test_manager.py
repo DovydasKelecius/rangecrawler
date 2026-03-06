@@ -3,7 +3,7 @@ import os
 import sqlite3
 from pathlib import Path
 from src.broker.manager import ModelManager
-from src.broker.models import AppConfig, BrokerConfig, ModelConfig, AuthConfig, AgentConfig
+from src.broker.models import AppConfig, BrokerConfig, ModelConfig, AgentConfig
 
 @pytest.fixture
 def temp_db(tmp_path):
@@ -19,7 +19,6 @@ def manager(temp_db, tmp_path):
     app_cfg = AppConfig(
         broker=broker_cfg,
         models=model_cfg,
-        auth=AuthConfig(),
         agent=agent_cfg
     )
     return ModelManager(app_cfg)

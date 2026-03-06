@@ -34,13 +34,9 @@ class BrokerConfig(BaseModel):
     database_path: str = "rangecrawler.db"
     request_timeout: float = 60.0
 
-class AuthConfig(BaseModel):
-    gemini_api_key: Optional[str] = None
-
 class AppConfig(BaseModel):
     broker: BrokerConfig
-    models: List[ModelConfig]
-    auth: AuthConfig = Field(default_factory=AuthConfig)
+    models: List[ModelConfig] = Field(default_factory=list)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     logging_level: str = "INFO"
 

@@ -2,7 +2,6 @@ import httpx
 import logging
 import json
 import asyncio
-import sqlite3
 import os
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.responses import JSONResponse
@@ -30,8 +29,8 @@ async def security_middleware(request: Request, call_next):
     """Whitelist IP check for all requests except registration, clients, workers, and commands."""
     open_paths = [
         "/register", "/register/ssh", "/clients", 
-        "/worker/register", "/health", "/command/submit", 
-        "/command/pending", "/command/result", "/command/status"
+        "/worker/register", "/worker/models", "/health", "/command/submit", 
+        "/command/pending", "/command/result", "/command/status", "/chat/context"
     ]
     if any(request.url.path.startswith(p) for p in open_paths):
         return await call_next(request)
@@ -85,7 +84,7 @@ async def register_ssh(request: Request):
         manager.register_ip(client_ip, ssh_config=ssh_cfg)
         
         # Return the latest worker public key to the client for automatic authorization
-        conn = sqlite3.connect(manager.db_path)
+        conn = manager.get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT public_key FROM worker_keys ORDER BY last_seen DESC LIMIT 1")
         row = cursor.fetchone()
@@ -112,13 +111,46 @@ async def register_worker(request: Request):
     if not public_key:
         raise HTTPException(status_code=400, detail="Missing public_key")
     
-    conn = sqlite3.connect(manager.db_path)
+    conn = manager.get_db()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO worker_keys (public_key) VALUES (?)", (public_key,))
+    # Use a fixed ID of 1 to ensure we only ever have ONE active worker key
+    cursor.execute("INSERT OR REPLACE INTO worker_keys (id, public_key, last_seen) VALUES (1, ?, CURRENT_TIMESTAMP)", (public_key,))
     conn.commit()
     conn.close()
     
     return {"status": "ok", "message": "Worker public key registered"}
+
+@app.post("/worker/models")
+async def register_models(request: Request):
+    """Register models available on a worker."""
+    from .models import ModelConfig
+    body = await request.json()
+    models_data = body.get("models", [])
+    
+    models = [ModelConfig(**m) for m in models_data]
+    manager.register_models(models)
+    
+    return {"status": "ok", "registered_count": len(models)}
+
+# --- CHAT CONTEXT CACHE ---
+# In-memory store for the latest context.json of each client.
+# This avoids constant SSH 'cat' commands from the CLI.
+context_cache: Dict[str, Any] = {}
+
+@app.post("/chat/context/{client_ip}")
+async def update_chat_context(client_ip: str, request: Request):
+    """Worker pushes the latest context for a client here."""
+    body = await request.json()
+    context_cache[client_ip] = body
+    return {"status": "ok"}
+
+@app.get("/chat/context/{client_ip}")
+async def get_chat_context(client_ip: str):
+    """Client CLI polls this to see if the AI has finished."""
+    context = context_cache.get(client_ip)
+    if not context:
+        return JSONResponse(status_code=404, content={"detail": "No context found for this client."})
+    return context
 
 @app.post("/command/submit")
 async def submit_command(request: Request):
@@ -130,7 +162,7 @@ async def submit_command(request: Request):
     if not client_ip or not command:
         raise HTTPException(status_code=400, detail="Missing client_ip or command")
     
-    conn = sqlite3.connect(manager.db_path)
+    conn = manager.get_db()
     cursor = conn.cursor()
     cursor.execute("INSERT INTO command_queue (client_ip, command) VALUES (?, ?)", (client_ip, command))
     command_id = cursor.lastrowid
@@ -142,7 +174,7 @@ async def submit_command(request: Request):
 @app.get("/command/pending/{client_ip}")
 async def get_pending_commands(client_ip: str):
     """Fetch pending commands for a specific client."""
-    conn = sqlite3.connect(manager.db_path)
+    conn = manager.get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT id, command FROM command_queue WHERE client_ip = ? AND status = 'pending'", (client_ip,))
     rows = cursor.fetchall()
@@ -157,7 +189,7 @@ async def post_command_result(request: Request):
     command_id = body.get("command_id")
     result = body.get("result")
     
-    conn = sqlite3.connect(manager.db_path)
+    conn = manager.get_db()
     cursor = conn.cursor()
     cursor.execute("UPDATE command_queue SET status = 'completed', result = ? WHERE id = ?", (result, command_id))
     conn.commit()
@@ -168,7 +200,7 @@ async def post_command_result(request: Request):
 @app.get("/command/status/{command_id}")
 async def get_command_status(command_id: int):
     """Get the status and result of a specific command."""
-    conn = sqlite3.connect(manager.db_path)
+    conn = manager.get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT status, result, command FROM command_queue WHERE id = ?", (command_id,))
     row = cursor.fetchone()
@@ -187,17 +219,12 @@ async def get_command_status(command_id: int):
 async def forward_to_llm_api(model_id: str, path: str, body: Dict[str, Any]):
     """Low-level forwarder for a single turn with the remote API."""
     target_base = await manager.get_endpoint(model_id)
-    clean_path = path
-    if "googleapis.com" in target_base and path.startswith("/v1"):
-        clean_path = path[3:] # Remove '/v1'
+    target_url = target_base.rstrip("/") + "/" + path.lstrip("/")
     
-    target_url = target_base.rstrip("/") + "/" + clean_path.lstrip("/")
-    headers = {}
-    if config.auth.gemini_api_key:
-        headers["Authorization"] = f"Bearer {config.auth.gemini_api_key}"
-
+    logger.debug(f"Forwarding chat request for model {model_id} to {target_url}")
+    
     async with httpx.AsyncClient(timeout=config.broker.request_timeout) as client:
-        resp = await client.post(target_url, json=body, headers=headers)
+        resp = await client.post(target_url, json=body)
         if resp.status_code != 200:
             logger.error(f"Upstream API Error ({resp.status_code}): {resp.text}")
             try:
@@ -315,7 +342,7 @@ async def chat_completions(request: Request, response: Response):
 @app.get("/clients")
 async def list_clients():
     """Returns a list of all registered clients for the worker to poll."""
-    conn = sqlite3.connect(manager.db_path)
+    conn = manager.get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT ip, ssh_host, ssh_port, ssh_username, ssh_pkey_path, working_directory, ssh_host_key FROM allowed_ips WHERE ssh_host IS NOT NULL")
     rows = cursor.fetchall()
@@ -354,5 +381,5 @@ async def get_stats():
 async def list_models():
     return {
         "object": "list",
-        "data": [{"id": mid, "object": "model", "owned_by": "rangecrawler"} for mid in manager.allowed_models]
+        "data": [{"id": mid, "object": "model", "owned_by": "rangecrawler"} for mid in manager.allowed_models.keys()]
     }

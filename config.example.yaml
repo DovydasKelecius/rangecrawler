@@ -1,43 +1,51 @@
-# RangeCrawler Example Configuration
+# RangeCrawler Configuration Template
 # Copy this to config.yaml and fill in your details
 
 broker:
-  host: "127.0.0.1"
-  port_assignment_url: null # Or "http://config-server/api/port"
+  # The interface the broker binds to. Use "0.0.0.0" to accept remote connections.
+  host: "0.0.0.0"
+
+  # Optional: URL to fetch an assigned port (useful for dynamic orchestration)
+  port_assignment_url: null
+
+  # The default port the broker listens on
   default_port: 8005
+
+  # Timeout in seconds before a session is considered idle
   idle_timeout: 300
+
+  # How often (seconds) the broker checks for idle sessions
   check_interval: 60
-  database_path: "rangecrawler.db"
 
-# Agent behavior settings
+  # PROFESSIONAL SETUP: Store the database in a dedicated data directory.
+  # This directory should be mounted as a volume in Docker for persistence.
+  database_path: "data/rangecrawler.db"
+
+# Agent & Orchestration settings
 agent:
+  # Global toggle for agent capabilities
   enabled: true
-  max_iterations: 15
-  default_timeout: 30
-  working_directory: "./agent_workspace"
-  # Optional: Map client IPs to remote SSH workspaces
-  workspaces:
-    - client_ip: "127.0.0.1" # Example for local testing if running broker elsewhere
-      ssh_host: "your.local.pc.ip"
-      ssh_port: 22
-      ssh_username: "kedo"
-      ssh_pkey_path: "~/.ssh/id_rsa"
-      working_directory: "/home/kedo/workspace"
 
-# Map your model IDs to remote endpoints
-models:
-  - id: "gemini-2.5-flash"
-    remote_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
-  - id: "gemini-2.5-pro"
-    remote_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+  # Maximum number of tool-calling iterations for a single prompt
+  max_iterations: 15
+
+  # Default timeout for tool execution (seconds)
+  default_timeout: 30
+
+  # Where local agent operations (read/write) are performed
+  working_directory: "./agent_workspace"
+
+  # PRE-REGISTERED WORKSPACES (Optional)
+  # You can define known clients here instead of relying on self-registration.
+  workspaces:
+    - client_ip: "192.168.1.50" # Example: A static VM in your network
+      ssh_host: "192.168.1.50"
+      ssh_port: 22
+      ssh_username: "root"
+      ssh_pkey_path: "/root/.ssh/id_rsa"
+      working_directory: "/"
 
 logging:
+  # Logging levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
-# Sensitive authentication
-# Priority:
-# 1. Environment Variable: export GEMINI_API_KEY="AIzaSy..."
-# 2. This config file (auth.gemini_api_key)
-auth:
-  gemini_api_key: "YOUR_API_KEY_HERE"

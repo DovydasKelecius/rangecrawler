@@ -58,4 +58,4 @@ _Goal: Create a standalone service that connects everything together._
 - [ ] **Network Loss Simulation:** Verify that if the Worker VM is unplugged, the Client VM's `context.json` remains intact.
 - [ ] **Concurrency Test:** Run 2 Client VMs and ensure the Broker and Worker keep their sessions isolated via UUID.
 - [ ] **Large Context Handling:** Ensure that as `context.json` grows, the SSH transfer doesn't become a bottleneck.
-- [ ] **Model Switching:** Allow the Client to request a specific model (e.g., `llama3`, `mistral`) via the Broker.
+- [ ] **Model Switching:** Allow the Client to request a specific model via the Broker.

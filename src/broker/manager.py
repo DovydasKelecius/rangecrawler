@@ -6,7 +6,7 @@ import sqlite3
 import paramiko  # type: ignore[import-untyped]
 import shlex
 from datetime import datetime
-from typing import Dict, Union, Optional
+from typing import Dict, Union, Optional, List
 from pathlib import Path
 from urllib.parse import urlparse
 from sshtunnel import SSHTunnelForwarder # type: ignore[import-untyped]
@@ -266,47 +266,75 @@ class ModelManager:
         self.sessions: Dict[str, SessionStats] = {}
         self.tunnels: Dict[str, SSHTunnelForwarder] = {}
         self.logger = logging.getLogger("ModelManager")
-        self.db_path = config.broker.database_path
+        
+        # Ensure database path is absolute
+        self.db_path = str(Path(config.broker.database_path).resolve())
         self._init_db()
         
         # Base local workspace directory
         self.workspace_base = Path(config.agent.working_directory).resolve()
         self.workspace_base.mkdir(parents=True, exist_ok=True)
 
+    def get_db(self):
+        """Returns a database connection."""
+        return sqlite3.connect(self.db_path)
+
+    def register_models(self, models: List[ModelConfig]):
+        """Register or update models reported by a worker."""
+        for model in models:
+            if model.id not in self.allowed_models:
+                self.logger.info(f"Dynamically registered model: {model.id} -> {model.remote_url}")
+            self.allowed_models[model.id] = model
+
     def _init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS allowed_ips (
-                ip TEXT PRIMARY KEY,
-                registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                ssh_host TEXT,
-                ssh_port INTEGER,
-                ssh_username TEXT,
-                ssh_pkey_path TEXT,
-                ssh_host_key TEXT,
-                working_directory TEXT
+        db_file = Path(self.db_path)
+        if db_file.is_dir():
+            raise IsADirectoryError(
+                f"Database path '{self.db_path}' is a directory, but a file is expected.\n"
+                "FIX: On your VM host, run 'mkdir -p data' and ensure config.yaml has "
+                "database_path: \"data/rangecrawler.db\""
             )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS worker_keys (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                public_key TEXT,
-                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS command_queue (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                client_ip TEXT,
-                command TEXT,
-                status TEXT DEFAULT 'pending',
-                result TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.commit()
-        conn.close()
+        
+        # Ensure parent directory exists
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            conn = self.get_db()
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS allowed_ips (
+                    ip TEXT PRIMARY KEY,
+                    registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    ssh_host TEXT,
+                    ssh_port INTEGER,
+                    ssh_username TEXT,
+                    ssh_pkey_path TEXT,
+                    ssh_host_key TEXT,
+                    working_directory TEXT
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS worker_keys (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    public_key TEXT,
+                    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS command_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_ip TEXT,
+                    command TEXT,
+                    status TEXT DEFAULT 'pending',
+                    result TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            self.logger.error(f"Failed to initialize database at {self.db_path}: {e}")
+            raise
 
     def get_workspace_context(self, ip: str) -> Union[Path, AgentWorkspaceConfig]:
         """Return either a local Path or a remote AgentWorkspaceConfig."""
@@ -315,7 +343,7 @@ class ModelManager:
             return self.workspace_configs[ip]
         
         # 2. Check Database for dynamically registered SSH workspaces
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT ssh_host, ssh_port, ssh_username, ssh_pkey_path, working_directory, ssh_host_key FROM allowed_ips WHERE ip = ? AND ssh_host IS NOT NULL", (ip,))
         row = cursor.fetchone()
@@ -347,7 +375,7 @@ class ModelManager:
 
     def register_ip(self, ip: str, ssh_config: Optional[AgentWorkspaceConfig] = None) -> bool:
         try:
-            conn = sqlite3.connect(self.db_path)
+            conn = self.get_db()
             cursor = conn.cursor()
             
             if ssh_config:
@@ -380,7 +408,7 @@ class ModelManager:
             return False
 
     def is_allowed(self, ip: str) -> bool:
-        conn = sqlite3.connect(self.db_path)
+        conn = self.get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT ip FROM allowed_ips WHERE ip = ?", (ip,))
         result = cursor.fetchone()
