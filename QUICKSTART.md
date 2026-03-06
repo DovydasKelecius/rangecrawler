@@ -23,7 +23,7 @@ The Broker is the central API gateway and client registry.
    ```bash
    docker compose --profile broker up -d
    ```
-   *The broker will listen on port 8005 by default.*
+   _The broker will listen on port 8005 by default._
 
 ---
 
@@ -67,12 +67,15 @@ The Agent registers the VM with the Broker and authorizes the Worker's SSH key.
 From **any machine** (including your local laptop) with `rangecrawler` installed and access to the Broker:
 
 ### Initial Setup
+
 Tell your CLI where the broker is:
+
 ```bash
 rangecrawler client --broker http://<BROKER_IP>:8005 status
 ```
 
 ### List Resources
+
 ```bash
 # See which models are available via the Worker
 python3 src.main client models
@@ -82,17 +85,22 @@ python3 src.main client clients
 ```
 
 ### Run Commands
+
 Execute ad-hoc shell commands on a remote client:
+
 ```bash
 python3 src.main client run "df -h" --ip <CLIENT_IP>
 ```
 
 ### Interactive AI Chat
+
 Start a session where the LLM "inhabits" the remote VM. It can read files, run bash, and see directory structures.
+
 ```bash
 rangecrawler client chat --ip <CLIENT_IP> --model llama3:latest
 ```
-*In chat mode, the Worker handles all security and tool execution via the established SSH tunnel.*
+
+_In chat mode, the Worker handles all security and tool execution via the established SSH tunnel._
 
 ---
 

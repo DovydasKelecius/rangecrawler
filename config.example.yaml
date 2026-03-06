@@ -4,19 +4,19 @@
 broker:
   # The interface the broker binds to. Use "0.0.0.0" to accept remote connections.
   host: "0.0.0.0"
-  
+
   # Optional: URL to fetch an assigned port (useful for dynamic orchestration)
-  port_assignment_url: null 
-  
+  port_assignment_url: null
+
   # The default port the broker listens on
   default_port: 8005
-  
+
   # Timeout in seconds before a session is considered idle
   idle_timeout: 300
-  
+
   # How often (seconds) the broker checks for idle sessions
   check_interval: 60
-  
+
   # PROFESSIONAL SETUP: Store the database in a dedicated data directory.
   # This directory should be mounted as a volume in Docker for persistence.
   database_path: "data/rangecrawler.db"
@@ -25,16 +25,16 @@ broker:
 agent:
   # Global toggle for agent capabilities
   enabled: true
-  
+
   # Maximum number of tool-calling iterations for a single prompt
   max_iterations: 15
-  
+
   # Default timeout for tool execution (seconds)
   default_timeout: 30
-  
+
   # Where local agent operations (read/write) are performed
   working_directory: "./agent_workspace"
-  
+
   # PRE-REGISTERED WORKSPACES (Optional)
   # You can define known clients here instead of relying on self-registration.
   workspaces:

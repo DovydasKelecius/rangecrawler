@@ -533,7 +533,6 @@ def get_reachable_ip():
 
 def worker_loop():
     global BROKER_URL
-    import socket
     BROKER_URL = get_effective_broker_url()
     
     # Detect our own IP to report where Ollama is
