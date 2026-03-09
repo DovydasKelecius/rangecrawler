@@ -33,8 +33,8 @@ def test_inference():
     
     # Example Chat request (Ollama API style)
     payload = {
-        "model": "llama3",
-        "messages": [{"role": "user", "content": "What is the capital of France?"}],
+        "model": "{model_name}",
+        "messages": [{"role": "user", "content": "Hello, what model are you running on?"}],
         "stream": False
     }
     
@@ -61,7 +61,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         model = sys.argv[1]
     else:
-        model = "llama3"
+        model = "{model_name}"  # Default model name for testing
         
     if request_ollama(model):
         test_inference()
