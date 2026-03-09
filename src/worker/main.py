@@ -531,6 +531,8 @@ def get_reachable_ip():
     except Exception: # nosec B110
         return "127.0.0.1"
 
+import sys
+
 # Track active provisions to allow for cleanup later
 ACTIVE_PROVISIONS = {} # client_ip -> {proxy_pid, tunnel_pid, start_time}
 
@@ -546,16 +548,17 @@ def handle_provisioning(client_config, provision_data):
     logger.info(f"[PROVISION] Launching isolated Ollama for {client_ip}...")
     
     # 1. Start the Shield Proxy on the worker (binds to localhost only)
+    # Use sys.executable to ensure we use the same python as the worker
     proxy_proc = subprocess.Popen([
-        "python", "src/worker/shield_proxy.py", "--port", str(proxy_port)
+        sys.executable, "src/worker/shield_proxy.py", "--port", str(proxy_port)
     ])
     
     # 2. Start the Reverse Tunnel: Client:11434 -> Worker:11435 (Shield Proxy)
-    # We use -N (no command) and -f (background) if we wanted it detached,
-    # but for orchestration we keep the process handle.
     tunnel_cmd = [
         "ssh", "-o", "StrictHostKeyChecking=no",
         "-o", "UserKnownHostsFile=/dev/null",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=5",
         "-N", "-R", f"{target_port}:localhost:{proxy_port}",
         f"{client_config['ssh_username']}@{client_config['ssh_host']}"
     ]

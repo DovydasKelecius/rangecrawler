@@ -2,9 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install build dependencies
+# Install build and runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python requirements
