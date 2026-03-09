@@ -28,19 +28,21 @@ async def proxy_inference(request: Request, path: str):
     client = httpx.AsyncClient(base_url=OLLAMA_BASE_URL)
     url = httpx.URL(path=f"/{path}", query=request.url.query.encode("utf-8"))
     
-    # Track the last time a request was made (for inactivity timeouts)
-    # Note: In a real multi-process env, this would update a shared file/socket.
+    # Pre-read body before streaming starts
+    body = await request.body()
     
     async def stream_generator():
-        async with client.stream(
-            request.method, url,
-            content=await request.body(),
-            headers={k: v for k, v in request.headers.items() if k.lower() != "host"},
-            timeout=None
-        ) as resp:
-            async for chunk in resp.aiter_raw():
-                yield chunk
-        await client.aclose()
+        try:
+            async with client.stream(
+                request.method, url,
+                content=body,
+                headers={k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")},
+                timeout=None
+            ) as resp:
+                async for chunk in resp.aiter_raw():
+                    yield chunk
+        finally:
+            await client.aclose()
 
     return StreamingResponse(stream_generator())
 

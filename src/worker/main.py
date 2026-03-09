@@ -541,6 +541,15 @@ def handle_provisioning(client_config, provision_data):
     Spawns the isolation proxy and creates the reverse SSH tunnel.
     """
     client_ip = client_config["ip"]
+    
+    # 0. Kill existing provision for this IP if it exists
+    if client_ip in ACTIVE_PROVISIONS:
+        logger.info(f"[PROVISION] Cleaning up previous session for {client_ip} before restart.")
+        prev = ACTIVE_PROVISIONS[client_ip]
+        prev["proxy_proc"].terminate()
+        prev["tunnel_proc"].terminate()
+        time.sleep(1) # Wait for ports to free up
+    
     model = provision_data.get("model")
     target_port = provision_data.get("target_port", 11434)
     proxy_port = 11435 # Dynamically assigned in production
