@@ -6,8 +6,8 @@ from fastapi.responses import StreamingResponse
 
 app = FastAPI(title="RangeCrawler Ollama Shield Proxy")
 
-# Whitelist endpoints allowed for isolated client access
-ALLOWED_PATHS = {
+# Whitelist prefixes allowed for isolated client access
+ALLOWED_PREFIXES = {
     "/api/generate", "/api/chat", "/api/embeddings", 
     "/api/tags", "/api/version", "/api/show"
 }
@@ -17,29 +17,27 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 @app.middleware("http")
 async def isolation_filter(request: Request, call_next):
     """Ensure ONLY whitelisted paths can be accessed."""
-    path = request.url.path.rstrip("/")
-    # Normalize paths for comparison
-    if path not in [p.rstrip("/") for p in ALLOWED_PATHS]:
+    path = request.url.path
+    if not any(path.startswith(prefix) for prefix in ALLOWED_PREFIXES):
         return Response(content="[SECURITY BLOCK] This endpoint is restricted in the cyber range.", status_code=403)
     return await call_next(request)
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
 async def proxy_inference(request: Request, path: str):
     """Forward inference requests with status code transparency."""
-    client = httpx.AsyncClient(base_url=OLLAMA_BASE_URL)
-    url = httpx.URL(path=f"/{path}", query=request.url.query.encode("utf-8"))
+    # Create client with no timeout for long-running inference
+    client = httpx.AsyncClient(base_url=OLLAMA_BASE_URL, timeout=None)
     
+    url = httpx.URL(path=f"/{path}", query=request.url.query.encode("utf-8"))
     body = await request.body()
     
-    # We open the stream and read the headers first
-    # to pass the correct status code back to the client
     req = client.build_request(
         request.method, url,
         content=body,
         headers={k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
     )
     
-    resp = await client.send(req, stream=True, timeout=None)
+    resp = await client.send(req, stream=True)
     
     return StreamingResponse(
         resp.aiter_raw(),
