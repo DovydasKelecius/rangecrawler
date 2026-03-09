@@ -27,41 +27,42 @@ def request_ollama(model_name: str):
         print(f"[-] Connection error: {e}")
         return False
 
-def test_inference():
+def test_inference(model_name: str):
     """Attempt to use the local tunnel for inference."""
-    print("[*] Testing local Ollama API (localhost:11434)...")
-    
+    print(f"[*] Testing local Ollama API (localhost:11434) with model: {model_name}...")
+
     # Example Chat request (Ollama API style)
     payload = {
-        "model": "{model_name}",
-        "messages": [{"role": "user", "content": "Hello, what model are you running on?"}],
+        "model": model_name,
+        "messages": [{"role": "user", "content": "What is the capital of France?"}],
         "stream": False
     }
-    
+
     try:
         resp = httpx.post("http://localhost:11434/api/chat", json=payload, timeout=60.0)
         if resp.status_code == 200:
             result = resp.json()
-            print(f"[+] Inference Success: {result['message']['content']}")
+            if "message" in result:
+                print(f"[+] Inference Success: {result['message']['content']}")
+            else:
+                print(f"[-] Unexpected response format: {result}")
         else:
             print(f"[-] Inference failed ({resp.status_code}): {resp.text}")
-            
+
         # Test whitelisting: try to PULL a model (should be BLOCKED)
         print("[*] Testing Security (Trying to PULL a new model)...")
         pull_resp = httpx.post("http://localhost:11434/api/pull", json={"name": "mistral"})
         print(f"[!] Security Status: {pull_resp.status_code} - {pull_resp.text}")
         if pull_resp.status_code == 403:
             print("[✓] SUCCESS: Security proxy blocked the forbidden request.")
-            
+
     except Exception as e:
-        print(f"[-] Error connecting to local port: {e}")
+        print(f"[-] Error during testing: {e}")
         print("[TIP] Ensure the SSH tunnel is active and the Worker has Ollama running.")
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        model = sys.argv[1]
-    else:
-        model = "{model_name}"  # Default model name for testing
-        
-    if request_ollama(model):
-        test_inference()
+    requested_model = sys.argv[1] if len(sys.argv) > 1 else "llama3"
+
+    if request_ollama(requested_model):
+        test_inference(requested_model)
+
