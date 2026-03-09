@@ -1,8 +1,9 @@
 import httpx
 import time
 import sys
+import os
 
-BROKER_URL = "http://localhost:8005" # Change to actual Broker IP
+BROKER_URL = os.getenv("BROKER_URL", "http://localhost:8005")
 
 def request_ollama(model_name: str):
     """Request a secure inference tunnel from the broker."""

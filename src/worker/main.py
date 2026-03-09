@@ -670,11 +670,9 @@ def worker_loop():
                     # 3. Check for generation (Context Sync Loop)
                     process_generation_request(client)
 
-                    # 4. Periodically clean up old provisions
-                    cleanup_inactive_provisions()
-
-                    iteration += 1
-
+                # 4. Periodically clean up old provisions
+                cleanup_inactive_provisions()
+            else:
                 logger.error(f"Broker error: {resp.status_code}")
             
             iteration += 1
