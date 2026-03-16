@@ -3,10 +3,12 @@ import typer
 import time
 import json
 import os
+import base64
 from typing import Optional
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich.live import Live
 
 console = Console()
 app = typer.Typer(help="RangeCrawler Client CLI: Interact with the broker and registered clients.")
@@ -22,7 +24,7 @@ def load_state():
                 return json.load(f)
         except Exception: # nosec B110
             pass
-    return {"broker_url": "http://localhost:8005"}
+    return {"broker_url": "http://localhost:8000"}
 
 def save_state(state):
     """Save the client state to disk."""
@@ -49,7 +51,9 @@ def main(
     ctx.obj = state
 
 def get_broker_url(ctx: typer.Context):
-    return ctx.obj.get("broker_url", "http://localhost:8005")
+    # Ensure it doesn't have a trailing slash
+    url = ctx.obj.get("broker_url", "http://localhost:8000")
+    return url.rstrip("/")
 
 @app.command()
 def status(ctx: typer.Context):
@@ -66,149 +70,100 @@ def status(ctx: typer.Context):
         resp = httpx.get(f"{broker_url}/health", timeout=5.0)
         if resp.status_code == 200:
             console.print("[bold green]✓ Broker is ONLINE[/bold green]")
+            
+            # List models permitted for this client
+            models_resp = httpx.get(f"{broker_url}/v1/models", timeout=5.0)
+            if models_resp.status_code == 200:
+                models = models_resp.json().get("data", [])
+                if models:
+                    console.print("\n[bold cyan]Permitted Models:[/bold cyan]")
+                    for m in models:
+                        console.print(f" - {m['id']}")
+                else:
+                    console.print("\n[yellow]! No models currently permitted for your IP.[/yellow]")
         else:
             console.print(f"[bold red]✗ Broker returned error {resp.status_code}[/bold red]")
     except Exception as e:
         console.print(f"[bold red]✗ Could not reach broker: {e}[/bold red]")
 
 @app.command()
-def models(ctx: typer.Context):
-    """List available models discovered via Ollama /api/tags."""
-    broker_url = get_broker_url(ctx)
-    try:
-        resp = httpx.get(f"{broker_url}/v1/models", timeout=10.0)
-        if resp.status_code == 200:
-            models_list = resp.json().get("data", [])
-            if not models_list:
-                console.print("[yellow]No models found. Ensure a worker is running and reporting Ollama models.[/yellow]")
-                return
-
-            table = Table(title=f"Available Models on {broker_url}")
-            table.add_column("Model Name (ID)", style="cyan")
-            table.add_column("Source", style="magenta")
-            
-            for m in models_list:
-                table.add_row(m["id"], m.get("owned_by", "worker"))
-            console.print(table)
-        else:
-            console.print(f"[bold red]Error:[/bold red] Broker returned {resp.status_code}")
-    except Exception as e:
-        console.print(f"[bold red]Error:[/bold red] Could not connect to broker: {e}")
-
-@app.command()
-def clients(ctx: typer.Context):
-    """List registered clients on the broker."""
-    broker_url = get_broker_url(ctx)
-    try:
-        resp = httpx.get(f"{broker_url}/clients", timeout=10.0)
-        if resp.status_code == 200:
-            clients_list = resp.json().get("clients", [])
-            if not clients_list:
-                console.print("[yellow]No clients registered.[/yellow]")
-                return
-
-            table = Table(title="Registered Clients")
-            table.add_column("IP", style="green")
-            table.add_column("User", style="yellow")
-            table.add_column("SSH Host", style="blue")
-            
-            for c in clients_list:
-                table.add_row(c["ip"], c["ssh_username"], c["ssh_host"])
-            console.print(table)
-        else:
-            console.print(f"[bold red]Error:[/bold red] Broker returned {resp.status_code}")
-    except Exception as e:
-        console.print(f"[bold red]Error:[/bold red] Could not connect to broker: {e}")
-
-@app.command()
-def run(
+def chat(
     ctx: typer.Context,
-    command: str = typer.Argument(..., help="The shell command to execute"),
-    ip: str = typer.Option(..., "--ip", help="IP of the target client"),
-    wait: bool = typer.Option(True, help="Wait for the result"),
+    model: str = typer.Option(..., "--model", help="Model ID to use (e.g. llama3:latest)"),
 ):
-    """Run an ad-hoc command on a remote client."""
+    """Start an interactive chat session with the Broker's Agent."""
+    broker_url = get_broker_url(ctx)
+    
+    # 1. Verify model access before starting
+    try:
+        models_resp = httpx.get(f"{broker_url}/v1/models", timeout=5.0)
+        permitted = [m["id"] for m in models_resp.json().get("data", [])]
+        if model not in permitted:
+            console.print(f"[bold red]Error:[/bold red] You do not have permission to use model '{model}'.")
+            return
+    except Exception as e:
+        console.print(f"[bold red]Error verifying access:[/bold red] {e}")
+        return
+
+    console.print(Panel(f"Model: [bold green]{model}[/bold green]\n"
+                        f"Type 'exit' or 'quit' to end.", title="RangeCrawler Agent Chat"))
+    
+    messages = []
+    
+    while True:
+        try:
+            user_input = console.input("[bold cyan]User> [/bold cyan]")
+            if user_input.lower() in ["exit", "quit"]:
+                break
+            
+            messages.append({"role": "user", "content": user_input})
+            
+            with console.status(f"[bold blue]Agent is thinking (wall-clock timer active)...") as status:
+                resp = httpx.post(
+                    f"{broker_url}/v1/chat/completions",
+                    json={
+                        "model": model,
+                        "messages": messages,
+                        "stream": False
+                    },
+                    timeout=300.0 # Agents can take a long time
+                )
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    assistant_msg = data["choices"][0]["message"]
+                    messages.append(assistant_msg)
+                    console.print(f"\n[bold yellow]Assistant>[/bold yellow] {assistant_msg['content']}\n")
+                else:
+                    err = resp.json().get("detail", "Unknown error")
+                    console.print(f"[bold red]Error ({resp.status_code}):[/bold red] {err}")
+                    messages.pop() # Remove failed message
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            console.print(f"[bold red]Error:[/bold red] {e}")
+
+@app.command()
+def provision(
+    ctx: typer.Context,
+    model: str = typer.Argument(..., help="The model to provision (e.g. gpt-4o)"),
+    timeout: int = typer.Option(30, "--timeout", help="Provisioning timeout in minutes")
+):
+    """Request a local Ollama API tunnel on localhost:11434."""
     broker_url = get_broker_url(ctx)
     try:
         resp = httpx.post(
-            f"{broker_url}/command/submit",
-            json={"client_ip": ip, "command": command},
+            f"{broker_url}/v1/request-ollama",
+            json={"model": model, "timeout_minutes": timeout},
             timeout=10.0
         )
         if resp.status_code == 200:
-            cmd_id = resp.json().get("command_id")
-            console.print(f"[bold green]✓[/bold green] Command submitted (ID: {cmd_id})")
-            
-            if wait:
-                with console.status("[bold blue]Waiting for result...") as _:
-                    while True:
-                        status_resp = httpx.get(f"{broker_url}/command/status/{cmd_id}", timeout=5.0)
-                        if status_resp.status_code == 200:
-                            data = status_resp.json()
-                            if data["status"] == "completed":
-                                console.print("\n[bold]Command Result:[/bold]")
-                                console.print(Panel(data["result"], border_style="dim"))
-                                break
-                        time.sleep(2)
+            console.print(Panel(resp.json()["message"], title="Provisioning Started", border_style="green"))
         else:
-            console.print(f"[bold red]Error:[/bold red] Submission failed ({resp.status_code})")
+            err = resp.json().get("detail", "Provisioning failed")
+            console.print(f"[bold red]Error ({resp.status_code}):[/bold red] {err}")
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {e}")
-
-@app.command()
-def chat(
-    ctx: typer.Context,
-    ip: str = typer.Option(..., "--ip", help="IP of the client machine to 'inhabit'"),
-    model: str = typer.Option(..., "--model", help="Model ID to use (e.g. llama3:latest)"),
-):
-    """Start a secure interactive chat. The Worker handles everything locally via SSH."""
-    broker_url = get_broker_url(ctx)
-    console.print(Panel(f"[bold blue]Secure Session Started[/bold blue]\n"
-                        f"Target: {ip}\nModel: {model}", title="RangeCrawler Chat"))
-    
-    # Track the number of messages we've seen to detect new ones
-    last_msg_count = 0
-    try:
-        resp = httpx.get(f"{broker_url}/chat/context/{ip}", timeout=5.0)
-        if resp.status_code == 200:
-            last_msg_count = len(resp.json().get("messages", []))
-    except Exception: # nosec B110
-        pass
-    while True:
-        user_input = console.input("[bold green]User> [/bold green]")
-        if user_input.lower() in ["exit", "quit"]:
-            break
-        
-        try:
-            # 1. Trigger the worker by writing to instruction.json
-            # This allows us to pass the model choice to the worker
-            instruction = {"model": model, "prompt": user_input}
-            # We use a base64-encoded echo to avoid any bash quoting issues
-            import base64
-            instr_b64 = base64.b64encode(json.dumps(instruction).encode()).decode()
-            write_cmd = f"echo {instr_b64} | base64 -d > instruction.json"
-            
-            httpx.post(f"{broker_url}/command/submit", json={"client_ip": ip, "command": write_cmd}, timeout=10.0)
-
-            # 2. Poll the BROKER CACHE for the answer
-            with console.status(f"[bold blue]Agent is working on {ip}..."):
-                while True:
-                    time.sleep(2)
-                    try:
-                        resp = httpx.get(f"{broker_url}/chat/context/{ip}", timeout=5.0)
-                        if resp.status_code == 200:
-                            context = resp.json()
-                            messages = context.get("messages", [])
-                            if len(messages) > last_msg_count:
-                                last_msg = messages[-1]
-                                if last_msg["role"] == "assistant":
-                                    console.print(f"\n[bold yellow]Assistant>[/bold yellow] {last_msg['content']}")
-                                    last_msg_count = len(messages)
-                                    break
-                    except Exception: # nosec B112
-                        continue
-        except Exception as e:
-            console.print(f"[bold red]Error:[/bold red] {e}")
 
 if __name__ == "__main__":
     app()

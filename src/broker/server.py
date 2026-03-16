@@ -266,67 +266,61 @@ async def execute_single_tool(func_name: str, func_args_str: str, workspace_cont
         return f"Error during tool execution: {str(e)}"
 
 async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: str, allow_tools: bool = True):
-    """Recursive agent loop with PARALLEL tool execution."""
-    
+    """Recursive agent loop with PARALLEL tool execution and STRICT permission enforcement."""
+
     current_messages = list(messages)
     max_iterations = config.agent.max_iterations
     workspace_context = manager.get_workspace_context(client_ip)
-    
+
+    # 1. Final check before starting: Is the model actually permitted for this IP?
+    permitted_models = [m.id for m in manager.get_permitted_models(client_ip)]
+    if model_id not in permitted_models:
+        raise HTTPException(status_code=403, detail=f"Model {model_id} is not in your permitted list.")
+
     for iteration in range(max_iterations):
-        logger.info(f"Agent Loop iteration {iteration + 1}/{max_iterations}")
-        
-        # Verify access periodically within the loop for long-running agents
+        logger.info(f"Agent Loop iteration {iteration + 1}/{max_iterations} for {client_ip}")
+
+        # 2. Re-verify access window between every iteration (in case time runs out mid-task)
         if not manager.check_access(client_ip, model_id):
-            raise HTTPException(status_code=403, detail="Access window expired during execution.")
+            raise HTTPException(status_code=403, detail="Access expired or usage quota reached during execution.")
 
         body = {
             "model": model_id,
             "messages": current_messages,
         }
-        
-        # Only add tools if allowed
+
         if allow_tools:
             body["tools"] = AGENT_TOOLS
             body["tool_choice"] = "auto"
-        
+
         response_data = await forward_to_llm_api(model_id, "/v1/chat/completions", body)
-        manager.track_usage(client_ip, 100)
-        
+
         choice = response_data["choices"][0]
         message = choice["message"]
-        
+
         if allow_tools and "tool_calls" in message and message["tool_calls"]:
             current_messages.append(message)
-            
-            # --- PARALLEL EXECUTION LOGIC ---
             tool_calls = message["tool_calls"]
             tasks = []
-            
+
             for tool_call in tool_calls:
                 func_name = tool_call["function"]["name"]
                 func_args = tool_call["function"]["arguments"]
                 logger.info(f"[*] AGENT TOOL CALL [{client_ip}]: {func_name}({func_args})")
-                
                 tasks.append(execute_single_tool(func_name, func_args, workspace_context, client_ip))
-            
-            # Execute all tools concurrently
+
             results = await asyncio.gather(*tasks)
-            
-            # Append results in order
+
             for i, result in enumerate(results):
                 tool_call = tool_calls[i]
-                func_name = tool_call["function"]["name"]
-                logger.info(f"[+] TOOL RESULT [{client_ip}]: {func_name} -> {str(result)[:200]}...")
                 current_messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call["id"],
-                    "name": func_name,
+                    "name": tool_call["function"]["name"],
                     "content": str(result)
                 })
-            
             continue
         else:
-            response_data["system_fingerprint"] = "fp_rangecrawler_agent_v1"
             return response_data
 
     raise HTTPException(status_code=504, detail="Agent loop limit reached.")
@@ -337,27 +331,35 @@ async def chat_completions(request: Request, response: Response):
     model_id = body.get("model")
     messages = body.get("messages", [])
     client_ip = request.client.host if request.client else None
+
     if not client_ip:
         raise HTTPException(status_code=400, detail="Unable to determine client IP")
-    
     if not model_id:
         raise HTTPException(status_code=400, detail="Missing model parameter")
-    
+
     # 1. Permission & Timing Check
     permission = manager.check_access(client_ip, model_id)
     if not permission:
-        raise HTTPException(status_code=403, detail=f"Permission denied or access window closed for model {model_id}")
+        raise HTTPException(status_code=403, detail=f"Permission denied for model {model_id}")
 
     # 2. Wall-clock timing
     start_time = datetime.now()
     try:
         final_response = await agent_loop(model_id, messages, client_ip, allow_tools=permission.allow_tools)
-    finally:
+        # Record usage only on success or controlled exit
         duration = int((datetime.now() - start_time).total_seconds())
         manager.record_usage(client_ip, model_id, max(1, duration))
-        
-    response.headers["X-RangeCrawler-Agent"] = "true"
-    return final_response
+        response.headers["X-RangeCrawler-Agent"] = "true"
+        return final_response
+    except HTTPException:
+        # Still record time even if we hit a timeout or error mid-loop
+        duration = int((datetime.now() - start_time).total_seconds())
+        manager.record_usage(client_ip, model_id, max(1, duration))
+        raise
+    except Exception as e:
+        logger.error(f"Error in chat_completions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/clients")
 async def list_clients():
