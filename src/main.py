@@ -193,6 +193,26 @@ def admin_models(
     except Exception as e:
         typer.echo(f"Connection failed: {e}")
 
+@admin_app.command("permissions")
+def admin_permissions(
+    broker_url: str = typer.Option("http://localhost:8000", "--broker", help="Broker URL")
+):
+    """List all client model permissions and usage."""
+    try:
+        resp = httpx.get(f"{broker_url}/admin/permissions", timeout=10.0)
+        if resp.status_code == 200:
+            perms = resp.json().get("permissions", [])
+            typer.echo(f"{'CLIENT IP':<15} | {'MODEL ID':<15} | {'TOOLS':<6} | {'USAGE (s)':<10} | {'QUOTA (s)':<10}")
+            typer.echo("-" * 75)
+            for p in perms:
+                tools = "YES" if p['allow_tools'] else "NO"
+                quota = p['max_usage_seconds'] if p['max_usage_seconds'] else "UNLIMITED"
+                typer.echo(f"{p['client_ip']:<15} | {p['model_id']:<15} | {tools:<6} | {p['used_seconds']:<10} | {quota:<10}")
+        else:
+            typer.echo(f"Error: {resp.text}")
+    except Exception as e:
+        typer.echo(f"Connection failed: {e}")
+
 app.add_typer(admin_app, name="admin")
 app.add_typer(client_app, name="client")
 
