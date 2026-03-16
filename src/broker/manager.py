@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from sshtunnel import SSHTunnelForwarder # type: ignore[import-untyped]
 
-from .models import AppConfig, ModelConfig, SessionStats, AgentWorkspaceConfig
+from .models import AppConfig, ModelConfig, SessionStats, AgentWorkspaceConfig, ClientPermission
 
 logger = logging.getLogger(__name__)
 
