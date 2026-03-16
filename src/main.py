@@ -136,6 +136,64 @@ def dashboard(
     typer.echo(f"Starting Dashboard on {host}:{port}")
     uvicorn.run("src.dashboard.app:app", host=host, port=port, reload=reload)
 
+# --- ADMIN CLI ---
+admin_app = typer.Typer(help="Administrative tools for managing models and permissions.")
+
+@admin_app.command("grant")
+def admin_grant(
+    ip: str = typer.Argument(..., help="Client IP address"),
+    model: str = typer.Argument(..., help="Model ID"),
+    tools: bool = typer.Option(True, "--tools/--no-tools", help="Allow tool execution"),
+    quota: Optional[int] = typer.Option(None, "--quota", help="Total usage seconds quota"),
+    window: Optional[str] = typer.Option(None, "--window", help="Daily window, e.g. 14:00-16:00"),
+    expires: Optional[str] = typer.Option(None, "--expires", help="Expiration date (ISO 8601, e.g. 2026-12-31T23:59:59)"),
+    lease: Optional[int] = typer.Option(None, "--lease", help="Lease duration in seconds from first use"),
+    broker_url: str = typer.Option("http://localhost:8000", "--broker", help="Broker URL")
+):
+    """Grant model access to a client."""
+    w_start, w_end = None, None
+    if window and "-" in window:
+        w_start, w_end = window.split("-")
+    
+    payload = {
+        "client_ip": ip,
+        "model_id": model,
+        "allow_tools": tools,
+        "max_usage_seconds": quota,
+        "expires_at": expires,
+        "window_start": w_start,
+        "window_end": w_end,
+        "lease_duration": lease,
+        "is_active": True
+    }
+    
+    try:
+        resp = httpx.post(f"{broker_url}/admin/permissions/grant", json=payload, timeout=10.0)
+        if resp.status_code == 200:
+            typer.echo(f"Successfully granted {model} to {ip}")
+        else:
+            typer.echo(f"Error: {resp.text}")
+    except Exception as e:
+        typer.echo(f"Connection failed: {e}")
+
+@admin_app.command("models")
+def admin_models(
+    broker_url: str = typer.Option("http://localhost:8000", "--broker", help="Broker URL")
+):
+    """List registered models."""
+    try:
+        resp = httpx.get(f"{broker_url}/admin/models", timeout=10.0)
+        if resp.status_code == 200:
+            models = resp.json().get("models", [])
+            for m in models:
+                status = "ACTIVE" if m['is_active'] else "INACTIVE"
+                typer.echo(f"[{status}] {m['id']} -> {m['remote_url']}")
+        else:
+            typer.echo(f"Error: {resp.text}")
+    except Exception as e:
+        typer.echo(f"Connection failed: {e}")
+
+app.add_typer(admin_app, name="admin")
 app.add_typer(client_app, name="client")
 
 if __name__ == "__main__":

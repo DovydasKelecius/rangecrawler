@@ -9,7 +9,7 @@ from typing import Dict, Any, List
 from datetime import datetime
 
 from .manager import ModelManager, AGENT_TOOLS, LocalTools
-from .models import OllamaProvisionRequest
+from .models import OllamaProvisionRequest, ModelConfig, ClientPermission
 from .config import load_config
 
 # Initialize configuration and manager
@@ -31,7 +31,8 @@ async def security_middleware(request: Request, call_next):
     open_paths = [
         "/register", "/register/ssh", "/clients", 
         "/worker/register", "/worker/models", "/health", "/command/submit", 
-        "/command/pending", "/command/result", "/command/status", "/chat/context"
+        "/command/pending", "/command/result", "/command/status", "/chat/context",
+        "/admin"
     ]
     if any(request.url.path.startswith(p) for p in open_paths):
         return await call_next(request)
@@ -264,7 +265,7 @@ async def execute_single_tool(func_name: str, func_args_str: str, workspace_cont
     except Exception as e:
         return f"Error during tool execution: {str(e)}"
 
-async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: str):
+async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: str, allow_tools: bool = True):
     """Recursive agent loop with PARALLEL tool execution."""
     
     current_messages = list(messages)
@@ -274,12 +275,19 @@ async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: s
     for iteration in range(max_iterations):
         logger.info(f"Agent Loop iteration {iteration + 1}/{max_iterations}")
         
+        # Verify access periodically within the loop for long-running agents
+        if not manager.check_access(client_ip, model_id):
+            raise HTTPException(status_code=403, detail="Access window expired during execution.")
+
         body = {
             "model": model_id,
             "messages": current_messages,
-            "tools": AGENT_TOOLS,
-            "tool_choice": "auto"
         }
+        
+        # Only add tools if allowed
+        if allow_tools:
+            body["tools"] = AGENT_TOOLS
+            body["tool_choice"] = "auto"
         
         response_data = await forward_to_llm_api(model_id, "/v1/chat/completions", body)
         manager.track_usage(client_ip, 100)
@@ -287,7 +295,7 @@ async def agent_loop(model_id: str, messages: List[Dict[str, Any]], client_ip: s
         choice = response_data["choices"][0]
         message = choice["message"]
         
-        if "tool_calls" in message and message["tool_calls"]:
+        if allow_tools and "tool_calls" in message and message["tool_calls"]:
             current_messages.append(message)
             
             # --- PARALLEL EXECUTION LOGIC ---
@@ -335,9 +343,20 @@ async def chat_completions(request: Request, response: Response):
     if not model_id:
         raise HTTPException(status_code=400, detail="Missing model parameter")
     
-    final_response = await agent_loop(model_id, messages, client_ip)
+    # 1. Permission & Timing Check
+    permission = manager.check_access(client_ip, model_id)
+    if not permission:
+        raise HTTPException(status_code=403, detail=f"Permission denied or access window closed for model {model_id}")
+
+    # 2. Wall-clock timing
+    start_time = datetime.now()
+    try:
+        final_response = await agent_loop(model_id, messages, client_ip, allow_tools=permission.allow_tools)
+    finally:
+        duration = int((datetime.now() - start_time).total_seconds())
+        manager.record_usage(client_ip, model_id, max(1, duration))
+        
     response.headers["X-RangeCrawler-Agent"] = "true"
-    
     return final_response
 
 @app.get("/clients")
@@ -379,10 +398,15 @@ async def get_stats():
     }
 
 @app.get("/v1/models")
-async def list_models():
+async def list_models(request: Request):
+    client_ip = request.client.host if request.client else None
+    if not client_ip:
+         return {"object": "list", "data": []}
+    
+    permitted = manager.get_permitted_models(client_ip)
     return {
         "object": "list",
-        "data": [{"id": mid, "object": "model", "owned_by": "rangecrawler"} for mid in manager.allowed_models.keys()]
+        "data": [{"id": m.id, "object": "model", "owned_by": "rangecrawler"} for m in permitted]
     }
 
 @app.post("/v1/request-ollama")
@@ -392,14 +416,18 @@ async def request_ollama_provisioning(request: Request, body: OllamaProvisionReq
     The Broker assigns this to a worker and enqueues a provisioning command.
     """
     client_ip = request.client.host if request.client else None
-    if not client_ip or not manager.is_allowed(client_ip):
-        raise HTTPException(status_code=403, detail="Client IP not authorized.")
+    if not client_ip:
+        raise HTTPException(status_code=400, detail="Unable to determine client IP")
     
-    # 1. Select the 'best' worker. For now, we take the first worker that reported models.
-    # In a real cyber range, this would involve VRAM/load balancing.
-    worker_models = list(manager.allowed_models.values())
-    if not worker_models:
-        raise HTTPException(status_code=503, detail="No workers currently available.")
+    # 1. Permission & Timing Check
+    permission = manager.check_access(client_ip, body.model)
+    if not permission:
+        raise HTTPException(status_code=403, detail=f"Permission denied or access window closed for model {body.model}")
+    
+    # 2. Select the 'best' worker.
+    db_models = manager.get_models_from_db()
+    if body.model not in db_models:
+        raise HTTPException(status_code=503, detail=f"Model {body.model} not available in registry.")
     
     # Identify target client config (SSH details)
     client_cfg = manager.get_workspace_context(client_ip)
@@ -407,7 +435,7 @@ async def request_ollama_provisioning(request: Request, body: OllamaProvisionReq
     if not isinstance(client_cfg, AgentWorkspaceConfig):
         raise HTTPException(status_code=400, detail="Client machine must be registered via SSH agent to use tunnels.")
 
-    # 2. Build the command payload
+    # 3. Build the command payload
     provision_cmd = {
         "action": "provision_isolated_ollama",
         "model": body.model,
@@ -416,7 +444,7 @@ async def request_ollama_provisioning(request: Request, body: OllamaProvisionReq
         "target_port": 11434 # The port on the CLIENT machine
     }
     
-    # 3. Queue the command for the worker to pick up
+    # 4. Queue the command for the worker to pick up
     conn = manager.get_db()
     cursor = conn.cursor()
     cursor.execute(
@@ -432,3 +460,76 @@ async def request_ollama_provisioning(request: Request, body: OllamaProvisionReq
         "message": f"Inference provision for {body.model} is starting. Access will be via localhost:11434 on your VM shortly.",
         "model": body.model
     }
+
+# --- ADMIN ENDPOINTS ---
+
+@app.post("/admin/models")
+async def admin_add_model(model: ModelConfig):
+    """Register or update a model in the registry."""
+    conn = manager.get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO models_registry (id, remote_url, ssh_host, ssh_username, ssh_pkey_path, description, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            remote_url=excluded.remote_url,
+            ssh_host=excluded.ssh_host,
+            ssh_username=excluded.ssh_username,
+            ssh_pkey_path=excluded.ssh_pkey_path,
+            description=excluded.description,
+            is_active=excluded.is_active
+    ''', (model.id, model.remote_url, model.ssh_host, model.ssh_username, model.ssh_pkey_path, model.description, int(model.is_active)))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "model_id": model.id}
+
+@app.get("/admin/models")
+async def admin_list_models():
+    """List all models in the registry (including inactive)."""
+    conn = manager.get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, remote_url, is_active FROM models_registry")
+    rows = cursor.fetchall()
+    conn.close()
+    return {"models": [{"id": r[0], "remote_url": r[1], "is_active": bool(r[2])} for r in rows]}
+
+@app.post("/admin/permissions/grant")
+async def admin_grant_permission(perm: ClientPermission):
+    """Grant or update permissions for a client."""
+    conn = manager.get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO client_permissions (
+            client_ip, model_id, allow_tools, max_usage_seconds, expires_at, 
+            window_start, window_end, lease_duration, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(client_ip, model_id) DO UPDATE SET
+            allow_tools=excluded.allow_tools,
+            max_usage_seconds=excluded.max_usage_seconds,
+            expires_at=excluded.expires_at,
+            window_start=excluded.window_start,
+            window_end=excluded.window_end,
+            lease_duration=excluded.lease_duration,
+            is_active=excluded.is_active
+    ''', (
+        perm.client_ip, perm.model_id, int(perm.allow_tools), perm.max_usage_seconds,
+        perm.expires_at.isoformat() if perm.expires_at else None,
+        perm.window_start, perm.window_end, perm.lease_duration, int(perm.is_active)
+    ))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "client_ip": perm.client_ip, "model_id": perm.model_id}
+
+@app.get("/admin/permissions")
+async def admin_list_permissions():
+    """List all client permissions."""
+    conn = manager.get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT client_ip, model_id, allow_tools, used_seconds, max_usage_seconds FROM client_permissions")
+    rows = cursor.fetchall()
+    conn.close()
+    return {"permissions": [
+        {"client_ip": r[0], "model_id": r[1], "allow_tools": bool(r[2]), "used_seconds": r[3], "max_usage_seconds": r[4]} 
+        for r in rows
+    ]}
+

@@ -261,7 +261,6 @@ class RemoteTools:
 class ModelManager:
     def __init__(self, config: AppConfig):
         self.config = config
-        self.allowed_models: Dict[str, ModelConfig] = {m.id: m for m in config.models}
         self.workspace_configs: Dict[str, AgentWorkspaceConfig] = {w.client_ip: w for w in config.agent.workspaces}
         self.sessions: Dict[str, SessionStats] = {}
         self.tunnels: Dict[str, SSHTunnelForwarder] = {}
@@ -270,6 +269,9 @@ class ModelManager:
         # Ensure database path is absolute
         self.db_path = str(Path(config.broker.database_path).resolve())
         self._init_db()
+        
+        # Load models from DB
+        self.allowed_models: Dict[str, ModelConfig] = self.get_models_from_db()
         
         # Base local workspace directory
         self.workspace_base = Path(config.agent.working_directory).resolve()
@@ -281,10 +283,24 @@ class ModelManager:
 
     def register_models(self, models: List[ModelConfig]):
         """Register or update models reported by a worker."""
+        conn = self.get_db()
+        cursor = conn.cursor()
         for model in models:
-            if model.id not in self.allowed_models:
-                self.logger.info(f"Dynamically registered model: {model.id} -> {model.remote_url}")
-            self.allowed_models[model.id] = model
+            cursor.execute('''
+                INSERT INTO models_registry (id, remote_url, ssh_host, ssh_username, ssh_pkey_path, is_active)
+                VALUES (?, ?, ?, ?, ?, 1)
+                ON CONFLICT(id) DO UPDATE SET
+                    remote_url=excluded.remote_url,
+                    ssh_host=excluded.ssh_host,
+                    ssh_username=excluded.ssh_username,
+                    ssh_pkey_path=excluded.ssh_pkey_path,
+                    is_active=1
+            ''', (model.id, model.remote_url, model.ssh_host, model.ssh_username, model.ssh_pkey_path))
+            self.logger.info(f"Registered model to DB: {model.id} -> {model.remote_url}")
+        conn.commit()
+        conn.close()
+        # Refresh in-memory for immediate use
+        self.allowed_models = self.get_models_from_db()
 
     def _init_db(self):
         db_file = Path(self.db_path)
@@ -330,11 +346,169 @@ class ModelManager:
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            
+            # --- New Tables for Permissions & Model Registry ---
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS models_registry (
+                    id TEXT PRIMARY KEY,
+                    remote_url TEXT NOT NULL,
+                    ssh_host TEXT,
+                    ssh_port INTEGER DEFAULT 22,
+                    ssh_username TEXT,
+                    ssh_pkey_path TEXT,
+                    description TEXT,
+                    is_active INTEGER DEFAULT 1
+                )
+            ''')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS client_permissions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_ip TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    allow_tools INTEGER DEFAULT 1,
+                    max_usage_seconds INTEGER,
+                    used_seconds INTEGER DEFAULT 0,
+                    expires_at DATETIME,
+                    window_start TEXT,
+                    window_end TEXT,
+                    lease_start DATETIME,
+                    lease_duration INTEGER,
+                    is_active INTEGER DEFAULT 1,
+                    UNIQUE(client_ip, model_id)
+                )
+            ''')
+            
+            conn.commit()
+            
+            # --- Auto-Migration: Sync models from config.yaml into DB ---
+            for m in self.config.models:
+                cursor.execute('''
+                    INSERT OR IGNORE INTO models_registry (id, remote_url, ssh_host, ssh_username, ssh_pkey_path)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (m.id, m.remote_url, m.ssh_host, m.ssh_username, m.ssh_pkey_path))
+            
             conn.commit()
             conn.close()
         except sqlite3.Error as e:
             self.logger.error(f"Failed to initialize database at {self.db_path}: {e}")
             raise
+
+    def get_models_from_db(self) -> Dict[str, ModelConfig]:
+        """Fetch all active models from the database."""
+        conn = self.get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, remote_url, ssh_host, ssh_username, ssh_pkey_path, description, is_active FROM models_registry WHERE is_active = 1")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return {
+            row[0]: ModelConfig(
+                id=row[0],
+                remote_url=row[1],
+                ssh_host=row[2],
+                ssh_username=row[3],
+                ssh_pkey_path=row[4],
+                description=row[5] or "",
+                is_active=bool(row[6])
+            ) for row in rows
+        }
+
+    def check_access(self, ip: str, model_id: str) -> Optional[ClientPermission]:
+        """Verify if a client IP has a valid permission for a model."""
+        conn = self.get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT client_ip, model_id, allow_tools, max_usage_seconds, used_seconds, 
+                   expires_at, window_start, window_end, lease_start, lease_duration, is_active 
+            FROM client_permissions 
+            WHERE client_ip = ? AND model_id = ? AND is_active = 1
+        ''', (ip, model_id))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            return None
+
+        perm = ClientPermission(
+            client_ip=row[0],
+            model_id=row[1],
+            allow_tools=bool(row[2]),
+            max_usage_seconds=row[3],
+            used_seconds=row[4],
+            expires_at=datetime.fromisoformat(row[5]) if row[5] else None,
+            window_start=row[6],
+            window_end=row[7],
+            lease_start=datetime.fromisoformat(row[8]) if row[8] else None,
+            lease_duration=row[9]
+        )
+
+        now = datetime.now()
+        
+        # 1. Absolute Expiration
+        if perm.expires_at and now > perm.expires_at:
+            return None
+        
+        # 2. Daily Window (Server Time)
+        if perm.window_start and perm.window_end:
+            now_time = now.strftime("%H:%M")
+            if not (perm.window_start <= now_time <= perm.window_end):
+                return None
+        
+        # 3. Quota (used seconds)
+        if perm.max_usage_seconds is not None and perm.used_seconds >= perm.max_usage_seconds:
+            return None
+            
+        # 4. Lease Duration
+        if perm.lease_start and perm.lease_duration:
+            if (now - perm.lease_start).total_seconds() > perm.lease_duration:
+                return None
+
+        return perm
+
+    def record_usage(self, ip: str, model_id: str, duration_seconds: int):
+        """Update wall-clock usage for a client-model pair."""
+        conn = self.get_db()
+        cursor = conn.cursor()
+        
+        # If this is the first usage, record lease_start
+        cursor.execute('''
+            UPDATE client_permissions 
+            SET used_seconds = used_seconds + ?,
+                lease_start = CASE WHEN lease_start IS NULL THEN ? ELSE lease_start END
+            WHERE client_ip = ? AND model_id = ?
+        ''', (duration_seconds, datetime.now().isoformat(), ip, model_id))
+        
+        conn.commit()
+        conn.close()
+
+    def get_permitted_models(self, ip: str) -> List[ModelConfig]:
+        """List models that the client is actually permitted to use."""
+        conn = self.get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT m.id, m.remote_url, m.ssh_host, m.ssh_username, m.ssh_pkey_path, m.description, m.is_active
+            FROM models_registry m
+            JOIN client_permissions p ON m.id = p.model_id
+            WHERE p.client_ip = ? AND p.is_active = 1 AND m.is_active = 1
+        ''', (ip,))
+        rows = cursor.fetchall()
+        conn.close()
+        
+        models = []
+        for row in rows:
+            mid = row[0]
+            if self.check_access(ip, mid):
+                models.append(ModelConfig(
+                    id=row[0],
+                    remote_url=row[1],
+                    ssh_host=row[2],
+                    ssh_username=row[3],
+                    ssh_pkey_path=row[4],
+                    description=row[5] or "",
+                    is_active=bool(row[6])
+                ))
+        return models
 
     def get_workspace_context(self, ip: str) -> Union[Path, AgentWorkspaceConfig]:
         """Return either a local Path or a remote AgentWorkspaceConfig."""
@@ -422,9 +596,11 @@ class ModelManager:
             session.last_active = datetime.now()
 
     async def get_endpoint(self, model_id: str) -> str:
-        if model_id not in self.allowed_models:
-            raise ValueError(f"Model {model_id} not configured.")
-        m_cfg = self.allowed_models[model_id]
+        # Refresh from DB to ensure we have the latest
+        models = self.get_models_from_db()
+        if model_id not in models:
+            raise ValueError(f"Model {model_id} not configured or inactive.")
+        m_cfg = models[model_id]
         if m_cfg.ssh_host:
             return await self._get_ssh_tunnel_endpoint(m_cfg)
         return m_cfg.remote_url
