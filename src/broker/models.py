@@ -44,7 +44,7 @@ class AgentConfig(BaseModel):
 class BrokerConfig(BaseModel):
     host: str = "0.0.0.0"  # nosec B104
     port_assignment_url: Optional[str] = None
-    default_port: int = 8000
+    default_port: int = 8005
     idle_timeout: int = 600
     check_interval: int = 60
     database_path: str = "rangecrawler.db"
