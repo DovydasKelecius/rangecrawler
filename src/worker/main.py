@@ -34,8 +34,9 @@ def worker_loop():
     iteration = 0
     while True:
         try:
-            if iteration % 60 == 0:
+            if iteration % 60 == 0: # Report models every 5 minutes
                 models = get_ollama_models(ollama_url)
+                logger.debug(f"Found models: {models}")
                 try:
                     httpx.post(
                         f"{broker_url}/worker/models", 
@@ -43,20 +44,26 @@ def worker_loop():
                         timeout=5.0
                     )
                     if models:
-                        logger.info(f"Reported {len(models)} models to broker.")
+                        logger.info(f"Refreshed {len(models)} models with broker.")
                 except Exception as e:
                     logger.warning(f"Failed to report models: {e}")
 
             resp = httpx.get(f"{broker_url}/clients", timeout=10.0)
             if resp.status_code == 200:
                 clients = resp.json().get("clients", [])
+                if iteration % 10 == 0:
+                    logger.info(f"Heartbeat: {len(clients)} registered clients.")
+                
                 for client in clients:
                     client_ip = client['ip']
+                    logger.debug(f"Checking for tasks for {client_ip}...")
                     
                     # 1. Check for pending commands
                     cmd_resp = httpx.get(f"{broker_url}/command/pending/{client_ip}", timeout=10.0)
                     if cmd_resp.status_code == 200:
-                        for cmd in cmd_resp.json().get("commands", []):
+                        tasks = cmd_resp.json().get("commands", [])
+                        if tasks: logger.info(f"Found {len(tasks)} tasks for {client_ip}.")
+                        for cmd in tasks:
                             execute_remote_command(client, cmd["id"], cmd["command"], broker_url)
                             try:
                                 data = json.loads(cmd["command"])
