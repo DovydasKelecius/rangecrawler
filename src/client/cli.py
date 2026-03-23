@@ -4,9 +4,12 @@ import json
 import httpx
 import time
 from typing import Optional
+from dotenv import load_dotenv
 from .commands.status import show_status
 from .commands.chat import start_chat
 from .commands.provision import request_provision
+
+load_dotenv()
 
 app = typer.Typer(help="RangeCrawler Client CLI.")
 STATE_FILE = os.path.expanduser("~/.rangecrawler_state.json")

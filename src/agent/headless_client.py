@@ -8,6 +8,9 @@ import argparse
 import time
 import subprocess # nosec B404
 from typing import Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
