@@ -34,7 +34,7 @@ app.dependency_overrides[TunnelManager] = get_tunnels
 async def security_middleware(request: Request, call_next):
     open_paths = [
         "/register", "/register/ssh", "/clients", 
-        "/worker/register", "/health", "/command/", "/chat/context",
+        "/worker/register", "/worker/models", "/health", "/command/", "/chat/context",
         "/admin", "/v1/models"
     ]
     if any(request.url.path.startswith(p) for p in open_paths):

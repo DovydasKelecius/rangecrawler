@@ -72,6 +72,23 @@ async def register_worker(request: Request, db: DatabaseManager = Depends()):
     conn.close()
     return {"status": "ok"}
 
+@router.post("/worker/models")
+async def register_models(request: Request, db: DatabaseManager = Depends()):
+    body = await request.json()
+    models_data = body.get("models", [])
+    
+    conn = db.get_db()
+    cursor = conn.cursor()
+    for m in models_data:
+        cursor.execute('''
+            INSERT INTO models_registry (id, remote_url, is_active)
+            VALUES (?, ?, 1)
+            ON CONFLICT(id) DO UPDATE SET remote_url=excluded.remote_url, is_active=1
+        ''', (m["id"], m["remote_url"]))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "registered_count": len(models_data)}
+
 @router.get("/clients")
 async def list_clients(db: DatabaseManager = Depends()):
     conn = db.get_db()
