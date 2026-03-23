@@ -2,6 +2,7 @@ import logging
 from fastapi import APIRouter, Request, Response, HTTPException, Depends
 from datetime import datetime
 from typing import Dict, Any, List
+from ..config import load_config
 from ..db.database import DatabaseManager
 from ..models import AppConfig, OllamaProvisionRequest
 from ..services.agent import agent_loop
@@ -25,7 +26,7 @@ async def chat_completions(
     request: Request, 
     response: Response, 
     db: DatabaseManager = Depends(), 
-    config: AppConfig = Depends(),
+    config: AppConfig = Depends(load_config),
     tunnels: TunnelManager = Depends()
 ):
     body = await request.json()

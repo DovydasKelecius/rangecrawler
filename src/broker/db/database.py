@@ -2,13 +2,14 @@ import sqlite3
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from ..models import AppConfig, ModelConfig, ClientPermission, AgentWorkspaceConfig
 
 logger = logging.getLogger(__name__)
 
 class DatabaseManager:
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: Any):
+        # We still expect it to be an AppConfig, but we use Any to hide it from FastAPI dependency parsing
         self.db_path = str(Path(config.broker.database_path).resolve())
         self._init_db(config)
 

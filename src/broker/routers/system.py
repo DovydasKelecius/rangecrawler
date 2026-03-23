@@ -1,6 +1,7 @@
 import logging
 from fastapi import APIRouter, Request, HTTPException, Depends
 from datetime import datetime
+from ..config import load_config
 from ..db.database import DatabaseManager
 from ..models import AppConfig, AgentWorkspaceConfig
 
@@ -8,7 +9,7 @@ router = APIRouter(tags=["system"])
 logger = logging.getLogger(__name__)
 
 @router.get("/health")
-async def health_check(config: AppConfig = Depends()):
+async def health_check(config: AppConfig = Depends(load_config)):
     return {
         "status": "online",
         "timestamp": datetime.now().isoformat(),
