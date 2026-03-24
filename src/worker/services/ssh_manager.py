@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-import paramiko
+import paramiko  # type: ignore
 import shlex
 from typing import Optional, Dict, Any
 

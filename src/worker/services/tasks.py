@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import httpx
-import paramiko
+import paramiko  # type: ignore
 import shlex
 import sys
 import subprocess  # nosec

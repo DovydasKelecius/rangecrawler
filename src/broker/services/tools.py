@@ -3,7 +3,7 @@ import json
 import shlex
 import asyncio
 import logging
-import paramiko
+import paramiko  # type: ignore
 from typing import Optional
 from pathlib import Path
 from ..models import AgentWorkspaceConfig
