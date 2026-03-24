@@ -1,22 +1,21 @@
 import pytest
 from fastapi.testclient import TestClient
-from src.broker.server import app, manager
+from src.broker.main import app, db_manager
 import sqlite3
 
 @pytest.fixture(autouse=True)
 def setup_teardown():
-    # Setup: Ensure manager uses a test db if needed, 
-    # but since server.py already initialized it, we might just use it.
-    # To be safe, we could mock manager.db_path or just clean up tables.
-    conn = sqlite3.connect(manager.db_path)
+    # Setup: Ensure db_manager uses a test db if needed.
+    # We should clean up tables before each test.
+    conn = sqlite3.connect(db_manager.db_path)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM allowed_ips")
     cursor.execute("DELETE FROM command_queue")
     cursor.execute("DELETE FROM worker_keys")
+    cursor.execute("DELETE FROM client_permissions")
     conn.commit()
     conn.close()
     yield
-    # Teardown: Optional cleanup
 
 client = TestClient(app)
 
@@ -34,7 +33,7 @@ def test_register_ip():
     
     # Verify it's allowed now
     ip = data["ip"]
-    assert manager.is_allowed(ip) is True
+    assert db_manager.is_allowed(ip) is True
 
 def test_unauthorized_access():
     # Try to access a protected route without registration

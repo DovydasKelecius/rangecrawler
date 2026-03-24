@@ -15,7 +15,8 @@ logger = logging.getLogger("OllamaWorker")
 
 def register_worker_key(broker_url):
     pkey = get_worker_pkey()
-    if not pkey: return
+    if not pkey:
+        return
     pub_key = f"{pkey.get_name()} {pkey.get_base64()}"
     try:
         resp = httpx.post(f"{broker_url}/worker/register", json={"public_key": pub_key}, timeout=10.0)
@@ -62,14 +63,16 @@ def worker_loop():
                     cmd_resp = httpx.get(f"{broker_url}/command/pending/{client_ip}", timeout=10.0)
                     if cmd_resp.status_code == 200:
                         tasks = cmd_resp.json().get("commands", [])
-                        if tasks: logger.info(f"Found {len(tasks)} tasks for {client_ip}.")
+                        if tasks:
+                            logger.info(f"Found {len(tasks)} tasks for {client_ip}.")
                         for cmd in tasks:
                             execute_remote_command(client, cmd["id"], cmd["command"], broker_url)
                             try:
                                 data = json.loads(cmd["command"])
                                 if data.get("action") == "provision_isolated_ollama":
                                     handle_provisioning(client, data)
-                            except: pass
+                            except Exception:
+                                pass
                     
                     # 2. Check for generation requests (Context Sync Loop)
                     process_generation_request(client, broker_url, ollama_url)

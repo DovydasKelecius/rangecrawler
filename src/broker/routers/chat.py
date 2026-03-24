@@ -1,7 +1,7 @@
 import logging
 from fastapi import APIRouter, Request, Response, HTTPException, Depends
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any
 from ..config import load_config
 from ..db.database import DatabaseManager
 from ..models import AppConfig, OllamaProvisionRequest
@@ -17,7 +17,8 @@ context_cache: Dict[str, Any] = {}
 @router.get("/v1/models")
 async def list_models(request: Request, db: DatabaseManager = Depends()):
     client_ip = request.client.host if request.client else None
-    if not client_ip: return {"object": "list", "data": []}
+    if not client_ip:
+        return {"object": "list", "data": []}
     permitted = db.get_permitted_models(client_ip)
     return {"object": "list", "data": [{"id": m.id, "object": "model"} for m in permitted]}
 
@@ -41,20 +42,24 @@ async def chat_completions(
     if not permission:
         raise HTTPException(status_code=403, detail=f"Permission denied for model {model_id}")
 
-    workspace = db.get_workspace_config(client_ip) or db.db_path # Fallback to a safe local path? 
-    # Actually, in the old manager it defaulted to a local path.
-    if not workspace:
-        # Re-implementing logic from old manager.get_workspace_context
+    # Determine workspace context: AgentWorkspaceConfig for remote, Path for local
+    workspace_cfg = db.get_workspace_config(client_ip)
+    if workspace_cfg:
+        workspace: Any = workspace_cfg
+    else:
+        # Fallback to a safe local path
         from pathlib import Path
         safe_ip = client_ip.replace(":", "_").replace(".", "-")
-        workspace = Path(config.agent.working_directory).resolve() / f"agent_{safe_ip}"
-        workspace.mkdir(parents=True, exist_ok=True)
+        local_workspace = Path(config.agent.working_directory).resolve() / f"agent_{safe_ip}"
+        local_workspace.mkdir(parents=True, exist_ok=True)
+        workspace = local_workspace
 
     start_time = datetime.now()
     try:
         async def get_ep(mid):
             models = db.get_models()
-            if mid not in models: raise HTTPException(status_code=503, detail="Model not available")
+            if mid not in models:
+                raise HTTPException(status_code=503, detail="Model not available")
             return await tunnels.get_endpoint(mid, models[mid])
 
         final_response = await agent_loop(
@@ -85,19 +90,23 @@ async def update_chat_context(client_ip: str, request: Request):
 @router.get("/chat/context/{client_ip}")
 async def get_chat_context(client_ip: str):
     context = context_cache.get(client_ip)
-    if not context: raise HTTPException(status_code=404, detail="No context found")
+    if not context:
+        raise HTTPException(status_code=404, detail="No context found")
     return context
 
 @router.post("/v1/request-ollama")
 async def provision_ollama(request: Request, body: OllamaProvisionRequest, db: DatabaseManager = Depends()):
     client_ip = request.client.host if request.client else None
-    if not client_ip: raise HTTPException(status_code=400, detail="Missing client IP")
+    if not client_ip:
+        raise HTTPException(status_code=400, detail="Missing client IP")
     
     permission = db.check_access(client_ip, body.model)
-    if not permission: raise HTTPException(status_code=403, detail="Permission denied")
+    if not permission:
+        raise HTTPException(status_code=403, detail="Permission denied")
     
     client_cfg = db.get_workspace_config(client_ip)
-    if not client_cfg: raise HTTPException(status_code=400, detail="Client not registered with SSH")
+    if not client_cfg:
+        raise HTTPException(status_code=400, detail="Client not registered with SSH")
 
     provision_cmd = {
         "action": "provision_isolated_ollama",

@@ -67,10 +67,12 @@ AGENT_TOOLS = [
 
 def call_ollama(ollama_url: str, model: str, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None):
     payload = {"model": model, "messages": messages, "stream": False}
-    if tools: payload["tools"] = tools
+    if tools:
+        payload["tools"] = tools
     try:
         resp = httpx.post(f"{ollama_url}/api/chat", json=payload, timeout=120.0)
-        if resp.status_code == 200: return resp.json().get("message")
+        if resp.status_code == 200:
+            return resp.json().get("message")
         logger.error(f"Ollama error: {resp.status_code}")
     except Exception as e:
         logger.error(f"Failed to reach Ollama: {e}")
@@ -90,7 +92,8 @@ def worker_agent_loop(ssh, remote_path, model, messages, ollama_url):
     max_iterations = 10
     for iteration in range(max_iterations):
         response_msg = call_ollama(ollama_url, model, current_messages, tools=AGENT_TOOLS)
-        if not response_msg: return None
+        if not response_msg:
+            return None
         current_messages.append(response_msg)
         if "tool_calls" in response_msg and response_msg["tool_calls"]:
             for tool_call in response_msg["tool_calls"]:

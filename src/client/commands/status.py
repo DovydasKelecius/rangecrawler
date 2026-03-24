@@ -21,7 +21,8 @@ def show_status(broker_url: str, state_file: str):
                 models = models_resp.json().get("data", [])
                 if models:
                     console.print("\n[bold cyan]Permitted Models:[/bold cyan]")
-                    for m in models: console.print(f" - {m['id']}")
+                    for m in models:
+                        console.print(f" - {m['id']}")
                 else:
                     console.print("\n[yellow]! No models currently permitted.[/yellow]")
         else:

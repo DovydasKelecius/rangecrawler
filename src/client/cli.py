@@ -17,12 +17,15 @@ STATE_FILE = os.path.expanduser("~/.rangecrawler_state.json")
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
-            with open(STATE_FILE, "r") as f: return json.load(f)
-        except: pass
+            with open(STATE_FILE, "r") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
     return {"broker_url": os.getenv("BROKER_URL", "http://localhost:8005")}
 
 def save_state(state):
-    with open(STATE_FILE, "w") as f: json.dump(state, f)
+    with open(STATE_FILE, "w") as f:
+        json.dump(state, f)
 
 @app.callback()
 def main(ctx: typer.Context, broker: Optional[str] = typer.Option(None, "--broker")):

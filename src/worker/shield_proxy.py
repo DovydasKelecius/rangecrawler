@@ -25,8 +25,8 @@ async def isolation_filter(request: Request, call_next):
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
 async def proxy_inference(request: Request, path: str):
     """Forward inference requests with status code transparency."""
-    # Create client with no timeout for long-running inference
-    client = httpx.AsyncClient(base_url=OLLAMA_BASE_URL, timeout=None)
+    # Create client with 10 minute timeout for long-running inference
+    client = httpx.AsyncClient(base_url=OLLAMA_BASE_URL, timeout=600.0)
     
     url = httpx.URL(path=f"/{path}", query=request.url.query.encode("utf-8"))
     body = await request.body()
@@ -39,11 +39,12 @@ async def proxy_inference(request: Request, path: str):
     
     resp = await client.send(req, stream=True)
     
+    from starlette.background import BackgroundTask
     return StreamingResponse(
         resp.aiter_raw(),
         status_code=resp.status_code,
         headers={k: v for k, v in resp.headers.items() if k.lower() not in ("content-encoding", "transfer-encoding", "content-length")},
-        background=resp.aclose
+        background=BackgroundTask(resp.aclose)
     )
 
 if __name__ == "__main__":

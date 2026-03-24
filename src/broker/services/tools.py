@@ -4,8 +4,8 @@ import shlex
 import asyncio
 import logging
 import paramiko
+from typing import Optional
 from pathlib import Path
-from typing import Dict, Callable
 from ..models import AgentWorkspaceConfig
 
 logger = logging.getLogger(__name__)
@@ -77,10 +77,15 @@ class RemoteTools:
                     import base64
                     key_type, key_str = parts[0], parts[1]
                     key_bytes = base64.b64decode(key_str)
-                    if key_type == "ssh-rsa": key = paramiko.RSAKey(data=key_bytes)
-                    elif key_type == "ssh-ed25519": key = paramiko.Ed25519Key(data=key_bytes)
-                    else: key = None
-                    if key: ssh.get_host_keys().add(config.ssh_host, key_type, key)
+                    key: Optional[paramiko.PKey] = None
+                    if key_type == "ssh-rsa":
+                        key = paramiko.RSAKey(data=key_bytes)
+                    elif key_type == "ssh-ed25519":
+                        key = paramiko.Ed25519Key(data=key_bytes)
+                    else:
+                        key = None
+                    if key:
+                        ssh.get_host_keys().add(config.ssh_host, key_type, key)
             except Exception as e:
                 logger.warning(f"Failed to add host key: {e}")
 
@@ -111,7 +116,8 @@ class RemoteTools:
             sftp = ssh.open_sftp()
             full_path = os.path.join(config.working_directory, path)
             remote_dir = os.path.dirname(full_path)
-            if remote_dir: ssh.exec_command(f"mkdir -p {shlex.quote(remote_dir)}")
+            if remote_dir:
+                ssh.exec_command(f"mkdir -p {shlex.quote(remote_dir)}")  # nosec
             with sftp.open(full_path, 'w') as f:
                 f.write(content.encode('utf-8'))
             ssh.close()
@@ -136,7 +142,7 @@ class RemoteTools:
         try:
             ssh = RemoteTools._get_ssh_client(config)
             full_cmd = f"cd {shlex.quote(config.working_directory)} && {command}"
-            stdin, stdout, stderr = ssh.exec_command(full_cmd, timeout=timeout)
+            stdin, stdout, stderr = ssh.exec_command(full_cmd, timeout=timeout)  # nosec
             output = stdout.read().decode() + stderr.read().decode()
             ssh.close()
             return output

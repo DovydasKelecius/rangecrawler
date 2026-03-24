@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from ..models import ModelConfig, ClientPermission
 from ..db.database import DatabaseManager
 

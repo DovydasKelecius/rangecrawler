@@ -20,7 +20,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     # 1. Broker Config Overrides
     broker_data = data.get("broker", {})
     broker_cfg = BrokerConfig(
-        host=os.getenv("BROKER_HOST", broker_data.get("host", "0.0.0.0")),
+        host=os.getenv("BROKER_HOST", broker_data.get("host", "127.0.0.1")),
         port_assignment_url=os.getenv("BROKER_PORT_ASSIGNMENT_URL", broker_data.get("port_assignment_url")),
         default_port=int(os.getenv("BROKER_PORT", broker_data.get("default_port", 8005))),
         database_path=os.getenv("DATABASE_PATH", broker_data.get("database_path", "rangecrawler.db")),

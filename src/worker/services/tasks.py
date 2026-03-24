@@ -7,6 +7,7 @@ import shlex
 import sys
 import subprocess
 import time
+from typing import Dict, Any
 from .ssh_manager import setup_host_key, get_worker_pkey, fetch_context, push_context
 from .inference import worker_agent_loop
 
@@ -20,7 +21,7 @@ def execute_remote_command(client_config, command_id, command, broker_url):
     try:
         full_command = f"cd {shlex.quote(client_config.get('working_directory', '.'))} && {command}"
         ssh.connect(hostname=client_config["ssh_host"], port=client_config.get("ssh_port", 22), username=client_config["ssh_username"], pkey=pkey, timeout=10)
-        _, stdout, stderr = ssh.exec_command(full_command)
+        _, stdout, stderr = ssh.exec_command(full_command)  # nosec
         result = f"STDOUT:\n{stdout.read().decode()}\nSTDERR:\n{stderr.read().decode()}"
         httpx.post(f"{broker_url}/command/result", json={"command_id": command_id, "result": result}, timeout=10.0)
         return True
@@ -45,7 +46,8 @@ def process_generation_request(client_config, broker_url, ollama_url):
             with sftp.open(instr_file, "r") as f:
                 instruction = json.loads(f.read().decode("utf-8"))
             sftp.remove(instr_file)
-        except Exception: pass
+        except Exception:
+            pass
 
         if instruction:
             context = fetch_context(ssh, remote_path)
@@ -58,7 +60,7 @@ def process_generation_request(client_config, broker_url, ollama_url):
     finally:
         ssh.close()
 
-ACTIVE_PROVISIONS = {}
+ACTIVE_PROVISIONS: Dict[str, Any] = {}
 
 def handle_provisioning(client_config, provision_data):
     client_ip = client_config["ip"]

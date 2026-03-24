@@ -20,9 +20,10 @@ def start_chat(broker_url: str, model: str):
     while True:
         try:
             user_input = console.input("[bold cyan]User> [/bold cyan]")
-            if user_input.lower() in ["exit", "quit"]: break
+            if user_input.lower() in ["exit", "quit"]:
+                break
             messages.append({"role": "user", "content": user_input})
-            with console.status("[bold blue]Agent is thinking...") as status:
+            with console.status("[bold blue]Agent is thinking..."):
                 resp = httpx.post(f"{broker_url}/v1/chat/completions", json={"model": model, "messages": messages}, timeout=300.0)
                 if resp.status_code == 200:
                     assistant_msg = resp.json()["choices"][0]["message"]
@@ -31,4 +32,5 @@ def start_chat(broker_url: str, model: str):
                 else:
                     console.print(f"[bold red]Error ({resp.status_code}):[/bold red] {resp.text}")
                     messages.pop()
-        except KeyboardInterrupt: break
+        except KeyboardInterrupt:
+            break

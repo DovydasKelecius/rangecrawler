@@ -107,7 +107,7 @@ class RangeCrawlerAgent:
         except PermissionError:
             print(f"[-] ERROR: Permission denied writing to {ssh_dir}.")
             print(f"    HINT: You are trying to register as user '{self.username}'.")
-            print(f"    Please run the agent with 'sudo' or check your permissions.")
+            print("    Please run the agent with 'sudo' or check your permissions.")
         except Exception as e:
             print(f"[-] ERROR: Failed to authorize worker key: {e}")
 
