@@ -8,6 +8,22 @@ class ModelConfig(BaseModel):
     ssh_host: Optional[str] = None
     ssh_username: Optional[str] = None
     ssh_pkey_path: Optional[str] = None
+    description: Optional[str] = ""
+    is_active: bool = True
+
+class ClientPermission(BaseModel):
+    client_ip: str
+    model_id: str
+    allow_tools: bool = True
+    # Timing (Hybrid)
+    max_usage_seconds: Optional[int] = None  # Total quota
+    used_seconds: int = 0                    # Accumulated wall-clock time
+    expires_at: Optional[datetime] = None    # Absolute deadline
+    window_start: Optional[str] = None       # Daily start (e.g. "14:00")
+    window_end: Optional[str] = None         # Daily end (e.g. "16:00")
+    lease_start: Optional[datetime] = None   # First request timestamp
+    lease_duration: Optional[int] = None     # Seconds from lease_start
+    is_active: bool = True
 
 class AgentWorkspaceConfig(BaseModel):
     client_ip: str
@@ -28,7 +44,7 @@ class AgentConfig(BaseModel):
 class BrokerConfig(BaseModel):
     host: str = "0.0.0.0"  # nosec B104
     port_assignment_url: Optional[str] = None
-    default_port: int = 8000
+    default_port: int = 8005
     idle_timeout: int = 600
     check_interval: int = 60
     database_path: str = "rangecrawler.db"
@@ -45,3 +61,7 @@ class SessionStats(BaseModel):
     token_usage: int = 0
     start_time: datetime = Field(default_factory=datetime.now)
     last_active: datetime = Field(default_factory=datetime.now)
+
+class OllamaProvisionRequest(BaseModel):
+    model: str
+    timeout_minutes: int = 30

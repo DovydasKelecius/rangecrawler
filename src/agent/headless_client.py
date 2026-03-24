@@ -8,14 +8,23 @@ import argparse
 import time
 import subprocess # nosec B404
 from typing import Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 class RangeCrawlerAgent:
     def __init__(self, broker_url: str, working_dir: Optional[str] = None, username: Optional[str] = None):
         self.broker_url = broker_url.rstrip("/")
-        self.working_dir = working_dir or os.getcwd()
         self.username = username or getpass.getuser()
+        
+        # Default to / if user is root, otherwise current dir
+        if working_dir:
+            self.working_dir = os.path.abspath(working_dir)
+        else:
+            self.working_dir = "/" if self.username == "root" else os.getcwd()
+            
         self.hostname = socket.gethostname()
         self.os_info = f"{platform.system()} {platform.release()}"
         
@@ -39,15 +48,10 @@ class RangeCrawlerAgent:
     def get_local_ip(self):
         """Try to find the IP address that can reach the broker."""
         # If broker is on localhost, we are likely the host talking to a docker container.
-        # We should tell the broker to connect back to the Docker Gateway IP.
         if "127.0.0.1" in self.broker_url or "localhost" in self.broker_url:
-            # Try to find the gateway IP of the network we are actually using
             try:
-                # Look for the IP address on the bridge interface that routes to the broker.
-                # Avoid shell=True for security.
                 route_cmd = ["ip", "route", "get", "1.1.1.1"]
                 route_output = subprocess.check_output(route_cmd, stderr=subprocess.DEVNULL).decode() # nosec
-                # Parse output: "1.1.1.1 dev eth0 src 172.17.0.2 uid 0"
                 for part in route_output.split():
                     if part.startswith("172."):
                         return part
@@ -58,7 +62,6 @@ class RangeCrawlerAgent:
 
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            # Doesn't even have to be reachable
             s.connect(('8.8.8.8', 1))
             ip = s.getsockname()[0]
         except Exception:
@@ -72,34 +75,41 @@ class RangeCrawlerAgent:
         if not public_key:
             return
         
-        # Use the actual home directory of the registration user
-        if self.username == "root":
-            ssh_dir = "/root/.ssh"
-        else:
-            ssh_dir = os.path.expanduser(f"~{self.username}/.ssh")
+        try:
+            # Use the actual home directory of the registration user
+            if self.username == "root":
+                ssh_dir = "/root/.ssh"
+            else:
+                ssh_dir = os.path.expanduser(f"~{self.username}/.ssh")
+                if not os.path.exists(ssh_dir):
+                    ssh_dir = os.path.expanduser("~/.ssh")
+                
+            auth_keys_path = os.path.join(ssh_dir, "authorized_keys")
+                
+            # Ensure .ssh exists with 700
             if not os.path.exists(ssh_dir):
-                ssh_dir = os.path.expanduser("~/.ssh")
+                os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+            else:
+                os.chmod(ssh_dir, 0o700)
             
-        auth_keys_path = os.path.join(ssh_dir, "authorized_keys")
+            # Check if already exists
+            if os.path.exists(auth_keys_path):
+                with open(auth_keys_path, "r") as f:
+                    if public_key in f.read():
+                        print(f"[*] Worker key already authorized in {auth_keys_path}")
+                        return
             
-        # Ensure .ssh exists with 700
-        if not os.path.exists(ssh_dir):
-            os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
-        else:
-            os.chmod(ssh_dir, 0o700)
-        
-        # Check if already exists
-        if os.path.exists(auth_keys_path):
-            with open(auth_keys_path, "r") as f:
-                if public_key in f.read():
-                    print(f"[*] Worker key already authorized in {auth_keys_path}")
-                    return
-        
-        with open(auth_keys_path, "a") as f:
-            f.write(f"\n{public_key}\n")
-        
-        os.chmod(auth_keys_path, 0o600)
-        print(f"[+] Authorized worker key ({public_key[:20]}...) in {auth_keys_path}")
+            with open(auth_keys_path, "a") as f:
+                f.write(f"\n{public_key}\n")
+            
+            os.chmod(auth_keys_path, 0o600)
+            print(f"[+] Authorized worker key in {auth_keys_path}")
+        except PermissionError:
+            print(f"[-] ERROR: Permission denied writing to {ssh_dir}.")
+            print(f"    HINT: You are trying to register as user '{self.username}'.")
+            print("    Please run the agent with 'sudo' or check your permissions.")
+        except Exception as e:
+            print(f"[-] ERROR: Failed to authorize worker key: {e}")
 
     def register_self(self, ssh_port: int = 22, pkey_path: Optional[str] = None):
         """Register this machine as a remote workspace on the broker."""
@@ -123,7 +133,6 @@ class RangeCrawlerAgent:
                 print(f"[+] Successfully registered with broker at {self.broker_url}")
                 print(f"[+] Workspace set to: {self.working_dir}")
                 
-                # Handle automatic key authorization
                 worker_key = data.get("worker_public_key")
                 if worker_key:
                     self.authorize_worker(worker_key)
@@ -163,8 +172,8 @@ def run_agent(broker: str, working_dir: Optional[str] = None, user: Optional[str
 
 def main():
     parser = argparse.ArgumentParser(description="RangeCrawler Autonomous Agent")
-    parser.add_argument("--broker", type=str, default="http://localhost:8000", help="URL of the RangeCrawler broker")
-    parser.add_argument("--dir", type=str, help="Working directory for the LLM (default: current dir)")
+    parser.add_argument("--broker", type=str, default="http://localhost:8005", help="URL of the RangeCrawler broker")
+    parser.add_argument("--dir", type=str, help="Working directory for the LLM (default: / if root, otherwise current dir)")
     parser.add_argument("--user", type=str, help="Username to register (default: current user)")
     parser.add_argument("--ssh-port", type=int, default=22, help="SSH port of this machine")
     parser.add_argument("--pkey", type=str, help="Path to the private key ON THE BROKER that accesses this machine")
