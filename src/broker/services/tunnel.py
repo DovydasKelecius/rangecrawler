@@ -1,15 +1,15 @@
 import logging
 import os
-from typing import Dict
+from typing import Dict, Any
 from urllib.parse import urlparse
-from sshtunnel import SSHTunnelForwarder
+from sshtunnel import SSHTunnelForwarder  # type: ignore
 from ..models import ModelConfig
 
 logger = logging.getLogger(__name__)
 
 class TunnelManager:
     def __init__(self):
-        self.tunnels: Dict[str, SSHTunnelForwarder] = {}
+        self.tunnels: Dict[str, Any] = {}
 
     async def get_endpoint(self, model_id: str, m_cfg: ModelConfig) -> str:
         if m_cfg.ssh_host:

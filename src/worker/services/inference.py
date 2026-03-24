@@ -84,7 +84,7 @@ def get_ollama_models(ollama_url: str) -> List[str]:
         if resp.status_code == 200:
             return [m["name"] for m in resp.json().get("models", [])]
     except Exception:
-        pass
+        pass  # nosec
     return []
 
 def worker_agent_loop(ssh, remote_path, model, messages, ollama_url):

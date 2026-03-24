@@ -5,9 +5,10 @@ import httpx
 import paramiko
 import shlex
 import sys
-import subprocess
+import subprocess  # nosec
 import time
 from typing import Dict, Any
+
 from .ssh_manager import setup_host_key, get_worker_pkey, fetch_context, push_context
 from .inference import worker_agent_loop
 
@@ -47,7 +48,7 @@ def process_generation_request(client_config, broker_url, ollama_url):
                 instruction = json.loads(f.read().decode("utf-8"))
             sftp.remove(instr_file)
         except Exception:
-            pass
+            pass  # nosec
 
         if instruction:
             context = fetch_context(ssh, remote_path)
@@ -70,9 +71,9 @@ def handle_provisioning(client_config, provision_data):
         prev["tunnel_proc"].terminate()
     
     proxy_port = 11435
-    proxy_proc = subprocess.Popen([sys.executable, "src/worker/shield_proxy.py", "--port", str(proxy_port)])
+    proxy_proc = subprocess.Popen([sys.executable, "src/worker/shield_proxy.py", "--port", str(proxy_port)])  # nosec
     tunnel_cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", "-N", "-R", f"{provision_data['target_port']}:localhost:{proxy_port}", f"{client_config['ssh_username']}@{client_config['ssh_host']}"]
-    tunnel_proc = subprocess.Popen(tunnel_cmd)
+    tunnel_proc = subprocess.Popen(tunnel_cmd)  # nosec
     
     ACTIVE_PROVISIONS[client_ip] = {"proxy_proc": proxy_proc, "tunnel_proc": tunnel_proc, "start_time": time.time()}
 

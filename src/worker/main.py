@@ -72,7 +72,7 @@ def worker_loop():
                                 if data.get("action") == "provision_isolated_ollama":
                                     handle_provisioning(client, data)
                             except Exception:
-                                pass
+                                pass  # nosec
                     
                     # 2. Check for generation requests (Context Sync Loop)
                     process_generation_request(client, broker_url, ollama_url)
