@@ -13,7 +13,6 @@ env/
 # Project specific
 config.yaml
 rangecrawler.db
-tests/mock_env/test_config.yaml
 GEMINI.md
 .ruff_cache/
 .mypy_cache/
