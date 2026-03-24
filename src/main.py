@@ -63,18 +63,15 @@ def broker(
         config.broker.default_port
     )
     
-    # Import inside command to avoid eager initialization
-    from src.broker.server import app as broker_app, manager
-    
     typer.echo(f"Starting Broker on {listen_host}:{listen_port} (reload={reload})")
     try:
-        uvicorn.run(broker_app, host=listen_host, port=listen_port, reload=reload)
-    finally:
-        manager.cleanup()
+        uvicorn.run("src.broker.main:app", host=listen_host, port=listen_port, reload=reload)
+    except Exception as e:
+        typer.echo(f"Broker failed: {e}")
 
 @app.command()
 def agent(
-    broker_url: str = typer.Option("http://localhost:8005", "--broker", help="URL of the RangeCrawler broker"),
+    broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="URL of the RangeCrawler broker"),
     working_dir: Optional[str] = typer.Option(None, "--dir", help="Working directory for the LLM"),
     user: Optional[str] = typer.Option(None, "--user", help="Username to register"),
     ssh_port: int = typer.Option(22, "--ssh-port", help="SSH port of this machine"),
@@ -109,8 +106,8 @@ def agent(
 
 @app.command()
 def worker(
-    broker_url: Optional[str] = typer.Option(None, envvar="BROKER_URL", help="URL of the RangeCrawler broker"),
-    ollama_url: str = typer.Option("http://localhost:11434", envvar="OLLAMA_URL", help="URL of the Ollama server"),
+    broker_url: Optional[str] = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), envvar="BROKER_URL", help="URL of the RangeCrawler broker"),
+    ollama_url: str = typer.Option(os.getenv("OLLAMA_URL", "http://localhost:11434"), envvar="OLLAMA_URL", help="URL of the Ollama server"),
 ):
     """
     Start the RangeCrawler Worker (Ollama orchestrator).
@@ -148,7 +145,7 @@ def admin_grant(
     window: Optional[str] = typer.Option(None, "--window", help="Daily window, e.g. 14:00-16:00"),
     expires: Optional[str] = typer.Option(None, "--expires", help="Expiration date (ISO 8601, e.g. 2026-12-31T23:59:59)"),
     lease: Optional[int] = typer.Option(None, "--lease", help="Lease duration in seconds from first use"),
-    broker_url: str = typer.Option("http://localhost:8000", "--broker", help="Broker URL")
+    broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="Broker URL")
 ):
     """Grant model access to a client."""
     w_start, w_end = None, None
@@ -178,7 +175,7 @@ def admin_grant(
 
 @admin_app.command("models")
 def admin_models(
-    broker_url: str = typer.Option("http://localhost:8000", "--broker", help="Broker URL")
+    broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="Broker URL")
 ):
     """List registered models."""
     try:
@@ -195,7 +192,7 @@ def admin_models(
 
 @admin_app.command("permissions")
 def admin_permissions(
-    broker_url: str = typer.Option("http://localhost:8000", "--broker", help="Broker URL")
+    broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="Broker URL")
 ):
     """List all client model permissions and usage."""
     try:

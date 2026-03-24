@@ -1,51 +1,18 @@
-# RangeCrawler Configuration Template
-# Copy this to config.yaml and fill in your details
+# RangeCrawler Default Configuration
+# This file defines the default shape and values for the application.
+# Environment-specific overrides and secrets should be placed in a .env file.
 
 broker:
-  # The interface the broker binds to. Use "0.0.0.0" to accept remote connections.
-  host: "0.0.0.0"
+  host: "0.0.0.0" # Listen on all interfaces by default
+  default_port: 8005 # Default port, can be overridden by BROKER_PORT in .env
+  database_path: "rangecrawler.db"
 
-  # Optional: URL to fetch an assigned port (useful for dynamic orchestration)
-  port_assignment_url: null
-
-  # The default port the broker listens on
-  default_port: 8005
-
-  # Timeout in seconds before a session is considered idle
-  idle_timeout: 300
-
-  # How often (seconds) the broker checks for idle sessions
-  check_interval: 60
-
-  # PROFESSIONAL SETUP: Store the database in a dedicated data directory.
-  # This directory should be mounted as a volume in Docker for persistence.
-  database_path: "data/rangecrawler.db"
-
-# Agent & Orchestration settings
+# Agent behavior settings
 agent:
-  # Global toggle for agent capabilities
   enabled: true
-
-  # Maximum number of tool-calling iterations for a single prompt
   max_iterations: 15
-
-  # Default timeout for tool execution (seconds)
-  default_timeout: 30
-
-  # Where local agent operations (read/write) are performed
+  default_timeout: 120
   working_directory: "./agent_workspace"
 
-  # PRE-REGISTERED WORKSPACES (Optional)
-  # You can define known clients here instead of relying on self-registration.
-  workspaces:
-    - client_ip: "192.168.1.50" # Example: A static VM in your network
-      ssh_host: "192.168.1.50"
-      ssh_port: 22
-      ssh_username: "root"
-      ssh_pkey_path: "/root/.ssh/id_rsa"
-      working_directory: "/"
-
 logging:
-  # Logging levels: DEBUG, INFO, WARNING, ERROR, CRITICAL
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  level: "INFO" # Default logging level
