@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rangecrawler"
+version = "0.1.0"
+description = "Secure LLM Brokerage and Agent Orchestration"
+readme = "quick-gude.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "typer[all]>=0.9.0",
+    "httpx>=0.24.0",
+    "pydantic>=2.0.0",
+    "PyYAML>=6.0.1",
+    "sshtunnel>=0.4.0",
+    "paramiko>=3.3.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0"
+]
+
+[project.scripts]
+rangecrawler = "src.main:app"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["broker", "agent", "worker", "client"]
