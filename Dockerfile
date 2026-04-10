@@ -11,9 +11,9 @@ RUN apk add --no-cache \
     openssl-dev \
     make
 
-# Copy requirements and build wheels
+# Copy requirements and build wheels (Production Only)
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
 
 # Stage 2: Final Image
@@ -24,6 +24,9 @@ WORKDIR /app
 # Install and upgrade runtime dependencies for security patching
 RUN apk add --no-cache openssh-client libffi openssl && \
     apk upgrade --no-cache
+
+# Explicitly upgrade pip, setuptools, and wheel in final image to fix vulnerabilities (like jaraco.context)
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # Create a non-root user for security
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
