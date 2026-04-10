@@ -1,0 +1,15 @@
+venv
+__pycache__
+.git
+.github
+tests
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.db
+*.pyc
+*.pyo
+.env
+submission_pkg
+docs
+scripts
