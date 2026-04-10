@@ -27,7 +27,8 @@ services:
   # The Ollama Worker (Orchestrator)
   worker:
     build: .
-    command: ["python", "-m", "src.main", "worker", "--broker-url", "${BROKER_URL}"]
+    command:
+      ["python", "-m", "src.main", "worker", "--broker-url", "${BROKER_URL}"]
     profiles: ["worker", "all"]
     network_mode: host
     volumes:
