@@ -17,28 +17,36 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-# 2. Download Headless Client
+# 2. Setup Agent Directory and Venv
 AGENT_DIR="$HOME/.rangecrawler"
 mkdir -p "$AGENT_DIR"
 AGENT_FILE="$AGENT_DIR/headless_client.py"
+VENV_DIR="$AGENT_DIR/venv"
 
-echo "[*] Downloading agent script..."
-# Use the repo path or broker redirect
-curl -sSL "https://raw.githubusercontent.com/DovydasKelecius/rangecrawler/main/src/agent/headless_client.py" -o "$AGENT_FILE"
-
-# 3. Pip dependencies
-echo "[*] Ensuring Python dependencies..."
-if ! python3 -m pip install httpx python-dotenv; then
-    echo "[-] Warning: pip install failed. Attempting with --user..."
-    python3 -m pip install --user httpx python-dotenv
+echo "[*] Setting up virtual environment..."
+if ! python3 -m venv "$VENV_DIR"; then
+    echo "[-] Error: Failed to create virtual environment. Please install python3-venv."
+    exit 1
 fi
 
-# 4. Registration
+# 3. Download Headless Client
+echo "[*] Downloading agent script..."
+curl -sSL "https://raw.githubusercontent.com/DovydasKelecius/rangecrawler/main/src/agent/headless_client.py" -o "$AGENT_FILE"
+
+# 4. Install dependencies in Venv
+echo "[*] Installing dependencies in virtual environment..."
+if ! "$VENV_DIR/bin/pip" install httpx python-dotenv; then
+    echo "[-] Error: Failed to install dependencies."
+    exit 1
+fi
+
+# 5. Registration
 echo "[*] Registering with Broker at $BROKER_URL..."
-if ! python3 "$AGENT_FILE" --broker "$BROKER_URL"; then
+if ! "$VENV_DIR/bin/python3" "$AGENT_FILE" --broker "$BROKER_URL"; then
     echo "[-] Error: Registration failed."
     exit 1
 fi
 
 echo "[+] Agent installed and registered successfully."
-echo "[*] To keep agent running, use: python3 $AGENT_FILE --broker $BROKER_URL --heartbeat"
+echo "[*] To keep agent running, use:"
+echo "    $VENV_DIR/bin/python3 $AGENT_FILE --broker $BROKER_URL --heartbeat"
