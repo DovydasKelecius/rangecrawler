@@ -3,6 +3,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 console = Console()
+
 def start_chat(broker_url: str, model: str, client_uuid: str):
     headers = {"X-Client-UUID": client_uuid}
     try:
@@ -24,10 +25,13 @@ def start_chat(broker_url: str, model: str, client_uuid: str):
                 break
             messages.append({"role": "user", "content": user_input})
             with console.status("[bold blue]Agent is thinking..."):
-                resp = httpx.post(f"{broker_url}/v1/chat/completions", json={"model": model, "messages": messages}, headers=headers, timeout=300.0)
+                resp = httpx.post(
+                    f"{broker_url}/v1/chat/completions", 
+                    json={"model": model, "messages": messages}, 
+                    headers=headers, 
+                    timeout=300.0
+                )
                 if resp.status_code == 200:
-...
-
                     assistant_msg = resp.json()["choices"][0]["message"]
                     messages.append(assistant_msg)
                     console.print(f"\n[bold yellow]Assistant>[/bold yellow] {assistant_msg['content']}\n")
