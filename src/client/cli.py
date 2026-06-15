@@ -15,13 +15,23 @@ app = typer.Typer(help="RangeCrawler Client CLI.")
 STATE_FILE = os.path.expanduser("~/.rangecrawler_state.json")
 
 def load_state():
+    import uuid
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r") as f:
-                return json.load(f)
+                state = json.load(f)
+                if "client_uuid" not in state:
+                    state["client_uuid"] = str(uuid.uuid4())
+                    save_state(state)
+                return state
         except (json.JSONDecodeError, OSError):
             pass
-    return {"broker_url": os.getenv("BROKER_URL", "http://localhost:8005")}
+    state = {
+        "broker_url": os.getenv("BROKER_URL", "http://localhost:8005"),
+        "client_uuid": str(uuid.uuid4())
+    }
+    save_state(state)
+    return state
 
 def save_state(state):
     with open(STATE_FILE, "w") as f:
@@ -41,18 +51,19 @@ def status(ctx: typer.Context):
 
 @app.command()
 def chat(ctx: typer.Context, model: str = typer.Option(..., "--model")):
-    start_chat(ctx.obj["broker_url"], model)
+    start_chat(ctx.obj["broker_url"], model, ctx.obj["client_uuid"])
 
 @app.command()
-def provision(ctx: typer.Context, model: str = typer.Argument(...), timeout: int = typer.Option(30)):
-    request_provision(ctx.obj["broker_url"], model, timeout)
+def provision(ctx: typer.Context, model: str = typer.Argument(...), agent_uuid: str = typer.Option(..., "--agent"), timeout: int = typer.Option(30)):
+    request_provision(ctx.obj["broker_url"], model, timeout, ctx.obj["client_uuid"], agent_uuid)
 
 @app.command()
-def run(ctx: typer.Context, command: str = typer.Argument(...), ip: str = typer.Option(..., "--ip")):
-    """Run a shell command on a remote client."""
+def run(ctx: typer.Context, command: str = typer.Argument(...), agent_uuid: str = typer.Option(..., "--agent")):
+    """Run a shell command on a remote agent."""
     broker_url = ctx.obj["broker_url"]
+    headers = {"X-Client-UUID": ctx.obj["client_uuid"]}
     try:
-        resp = httpx.post(f"{broker_url}/command/submit", json={"client_ip": ip, "command": command}, timeout=10.0)
+        resp = httpx.post(f"{broker_url}/command/submit", json={"agent_uuid": agent_uuid, "command": command}, headers=headers, timeout=10.0)
         if resp.status_code == 200:
             cmd_id = resp.json()["command_id"]
             typer.echo(f"Command submitted. ID: {cmd_id}. Waiting for result...")

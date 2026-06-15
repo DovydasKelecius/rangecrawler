@@ -138,36 +138,21 @@ admin_app = typer.Typer(help="Administrative tools for managing models and permi
 
 @admin_app.command("grant")
 def admin_grant(
-    ip: str = typer.Argument(..., help="Client IP address"),
+    uuid: str = typer.Argument(..., help="Client UUID"),
     model: str = typer.Argument(..., help="Model ID"),
-    tools: bool = typer.Option(True, "--tools/--no-tools", help="Allow tool execution"),
-    quota: Optional[int] = typer.Option(None, "--quota", help="Total usage seconds quota"),
-    window: Optional[str] = typer.Option(None, "--window", help="Daily window, e.g. 14:00-16:00"),
-    expires: Optional[str] = typer.Option(None, "--expires", help="Expiration date (ISO 8601, e.g. 2026-12-31T23:59:59)"),
-    lease: Optional[int] = typer.Option(None, "--lease", help="Lease duration in seconds from first use"),
     broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="Broker URL")
 ):
     """Grant model access to a client."""
-    w_start, w_end = None, None
-    if window and "-" in window:
-        w_start, w_end = window.split("-")
-    
     payload = {
-        "client_ip": ip,
+        "client_uuid": uuid,
         "model_id": model,
-        "allow_tools": tools,
-        "max_usage_seconds": quota,
-        "expires_at": expires,
-        "window_start": w_start,
-        "window_end": w_end,
-        "lease_duration": lease,
         "is_active": True
     }
     
     try:
         resp = httpx.post(f"{broker_url}/admin/permissions/grant", json=payload, timeout=10.0)
         if resp.status_code == 200:
-            typer.echo(f"Successfully granted {model} to {ip}")
+            typer.echo(f"Successfully granted {model} to {uuid}")
         else:
             typer.echo(f"Error: {resp.text}")
     except Exception as e:
@@ -194,17 +179,16 @@ def admin_models(
 def admin_permissions(
     broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="Broker URL")
 ):
-    """List all client model permissions and usage."""
+    """List all client model permissions."""
     try:
         resp = httpx.get(f"{broker_url}/admin/permissions", timeout=10.0)
         if resp.status_code == 200:
             perms = resp.json().get("permissions", [])
-            typer.echo(f"{'CLIENT IP':<15} | {'MODEL ID':<15} | {'TOOLS':<6} | {'USAGE (s)':<10} | {'QUOTA (s)':<10}")
-            typer.echo("-" * 75)
+            typer.echo(f"{'CLIENT UUID':<40} | {'MODEL ID':<15} | {'ACTIVE':<6}")
+            typer.echo("-" * 65)
             for p in perms:
-                tools = "YES" if p['allow_tools'] else "NO"
-                quota = p['max_usage_seconds'] if p['max_usage_seconds'] else "UNLIMITED"
-                typer.echo(f"{p['client_ip']:<15} | {p['model_id']:<15} | {tools:<6} | {p['used_seconds']:<10} | {quota:<10}")
+                active = "YES" if p['is_active'] else "NO"
+                typer.echo(f"{p['client_uuid']:<40} | {p['model_id']:<15} | {active:<6}")
         else:
             typer.echo(f"Error: {resp.text}")
     except Exception as e:

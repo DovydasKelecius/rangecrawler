@@ -70,6 +70,7 @@ def execute_remote_command(agent_config, command_id, command, broker_url):
         ssh.close()
 
 def process_generation_request(agent_config, broker_url, ollama_url):
+    agent_uuid = agent_config["uuid"]
     session = get_ssh_session(agent_config, broker_url, scope="shell")
     if not session:
         return
@@ -97,10 +98,9 @@ def process_generation_request(agent_config, broker_url, ollama_url):
             if response_msg:
                 context["messages"].append(response_msg)
                 push_context(ssh, remote_path, context)
-                # Note: client_ip here might be client_uuid in new flow, but we use what we have
-                httpx.post(f"{broker_url}/chat/context/{agent_config.get('uuid')}", json=context, timeout=5.0)
+                httpx.post(f"{broker_url}/chat/context/{agent_uuid}", json=context, timeout=5.0)
     except Exception as e:
-        logger.error(f"Generation error for {agent_config.get('uuid')}: {e}")
+        logger.error(f"Generation error for {agent_uuid}: {e}")
     finally:
         ssh.close()
 

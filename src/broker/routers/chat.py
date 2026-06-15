@@ -44,17 +44,13 @@ async def chat_completions(
         raise HTTPException(status_code=403, detail=f"Permission denied for model {model_id}")
 
     # Determine workspace context
-    workspace: Any = None
+    workspace = None
     if agent_uuid:
         workspace = db.get_agent_config(agent_uuid)
     
     if not workspace:
-        # Fallback to local
-        from pathlib import Path
-        safe_id = client_uuid.replace(":", "_").replace(".", "-")
-        local_workspace = Path(config.agent.working_directory).resolve() / f"agent_{safe_id}"
-        local_workspace.mkdir(parents=True, exist_ok=True)
-        workspace = local_workspace
+        # If no agent provided, we still need some context for the loop but it's optional now
+        workspace = {}
 
     try:
         async def get_ep(mid):
@@ -66,27 +62,26 @@ async def chat_completions(
         final_response = await agent_loop(
             model_id=model_id,
             messages=messages,
-            client_ip=client_uuid, # Use UUID as identifier in agent loop
+            client_uuid=client_uuid,
             workspace_context=workspace,
             get_endpoint_fn=get_ep,
             check_access_fn=db.check_access,
-            config=config,
-            allow_tools=permission.allow_tools
+            config=config
         )
         response.headers["X-RangeCrawler-Agent"] = "true"
         return final_response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/chat/context/{client_uuid}")
-async def update_chat_context(client_uuid: str, request: Request):
+@router.post("/chat/context/{agent_uuid}")
+async def update_chat_context(agent_uuid: str, request: Request):
     body = await request.json()
-    context_cache[client_uuid] = body
+    context_cache[agent_uuid] = body
     return {"status": "ok"}
 
-@router.get("/chat/context/{client_uuid}")
-async def get_chat_context(client_uuid: str):
-    context = context_cache.get(client_uuid)
+@router.get("/chat/context/{agent_uuid}")
+async def get_chat_context(agent_uuid: str):
+    context = context_cache.get(agent_uuid)
     if not context:
         raise HTTPException(status_code=404, detail="No context found")
     return context
