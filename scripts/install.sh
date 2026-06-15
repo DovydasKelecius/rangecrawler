@@ -28,11 +28,17 @@ curl -sSL "https://raw.githubusercontent.com/DovydasKelecius/rangecrawler/main/s
 
 # 3. Pip dependencies
 echo "[*] Ensuring Python dependencies..."
-pip3 install httpx python-dotenv &> /dev/null
+if ! python3 -m pip install httpx python-dotenv; then
+    echo "[-] Warning: pip install failed. Attempting with --user..."
+    python3 -m pip install --user httpx python-dotenv
+fi
 
 # 4. Registration
 echo "[*] Registering with Broker at $BROKER_URL..."
-python3 "$AGENT_FILE" --broker "$BROKER_URL"
+if ! python3 "$AGENT_FILE" --broker "$BROKER_URL"; then
+    echo "[-] Error: Registration failed."
+    exit 1
+fi
 
 echo "[+] Agent installed and registered successfully."
 echo "[*] To keep agent running, use: python3 $AGENT_FILE --broker $BROKER_URL --heartbeat"
