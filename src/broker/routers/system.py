@@ -18,31 +18,31 @@ async def health_check(config: AppConfig = Depends(load_config)):
     }
 
 @router.post("/register")
-async def register_ip(request: Request, db: DatabaseManager = Depends()):
-    client_ip = request.client.host if request.client else None
-    if not client_ip:
-        raise HTTPException(status_code=400, detail="Unable to determine client IP")
-    registered = db.register_ip(client_ip)
-    return {"status": "ok", "ip": client_ip, "new_registration": registered}
+async def register_agent(request: Request, db: DatabaseManager = Depends()):
+    body = await request.json()
+    agent_uuid = body.get("agent_uuid")
+    if not agent_uuid:
+        raise HTTPException(status_code=400, detail="Missing agent_uuid")
+    registered = db.register_agent(agent_uuid)
+    return {"status": "ok", "agent_uuid": agent_uuid, "new_registration": registered}
 
 @router.post("/register/ssh")
 async def register_ssh(request: Request, db: DatabaseManager = Depends()):
     body = await request.json()
-    client_ip = request.client.host if request.client else None
-    if not client_ip:
-        raise HTTPException(status_code=400, detail="Unable to determine client IP")
+    agent_uuid = body.get("agent_uuid")
+    if not agent_uuid:
+        raise HTTPException(status_code=400, detail="Missing agent_uuid")
     
     try:
         ssh_cfg = AgentWorkspaceConfig(
-            client_ip=client_ip,
+            agent_uuid=agent_uuid,
             ssh_host=body["ssh_host"],
             ssh_port=body.get("ssh_port", 22),
             ssh_username=body["ssh_username"],
             ssh_pkey_path=body.get("ssh_pkey_path"),
-            ssh_host_key=body.get("ssh_host_key"),
-            working_directory=body.get("working_directory", ".")
+            ssh_host_key=body.get("ssh_host_key")
         )
-        db.register_ip(client_ip, ssh_config=ssh_cfg)
+        db.register_agent(agent_uuid, ssh_config=ssh_cfg)
         
         conn = db.get_db()
         cursor = conn.cursor()
@@ -52,25 +52,75 @@ async def register_ssh(request: Request, db: DatabaseManager = Depends()):
         
         return {
             "status": "ok", 
-            "ip": client_ip, 
+            "agent_uuid": agent_uuid, 
             "workspace": "ssh",
             "worker_public_key": row[0] if row else None
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@router.post("/worker/register")
-async def register_worker(request: Request, db: DatabaseManager = Depends()):
+@router.post("/handshake/init")
+async def init_handshake(request: Request, db: DatabaseManager = Depends()):
     body = await request.json()
+    agent_uuid = body.get("agent_uuid")
     public_key = body.get("public_key")
-    if not public_key:
-        raise HTTPException(status_code=400, detail="Missing public_key")
+    if not agent_uuid or not public_key:
+        raise HTTPException(status_code=400, detail="Missing agent_uuid or public_key")
+    
+    # Generate challenge
+    import secrets
+    challenge = secrets.token_hex(32)
     
     conn = db.get_db()
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO worker_keys (id, public_key, last_seen) VALUES (1, ?, CURRENT_TIMESTAMP)", (public_key,))
+    # Store pending handshake
+    cursor.execute('''
+        INSERT OR REPLACE INTO pending_handshakes (agent_uuid, public_key, challenge, status)
+        VALUES (?, ?, ?, 'pending')
+    ''', (agent_uuid, public_key, challenge))
     conn.commit()
     conn.close()
+    
+    return {"status": "ok", "challenge": challenge}
+
+@router.get("/handshake/poll/{agent_uuid}")
+async def poll_handshake(agent_uuid: str, db: DatabaseManager = Depends()):
+    conn = db.get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT public_key, challenge FROM pending_handshakes WHERE agent_uuid = ? AND status = 'pending'", (agent_uuid,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row:
+        return {"status": "none"}
+    return {"status": "pending", "public_key": row[0], "challenge": row[1]}
+
+@router.post("/handshake/confirm")
+async def confirm_handshake(request: Request, db: DatabaseManager = Depends()):
+    body = await request.json()
+    agent_uuid = body.get("agent_uuid")
+    if not agent_uuid:
+        raise HTTPException(status_code=400, detail="Missing agent_uuid")
+    
+    conn = db.get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE pending_handshakes SET status = 'confirmed' WHERE agent_uuid = ?", (agent_uuid,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok"}
+
+@router.get("/handshake/verify/{agent_uuid}")
+async def verify_handshake(agent_uuid: str, db: DatabaseManager = Depends()):
+    conn = db.get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT status FROM pending_handshakes WHERE agent_uuid = ?", (agent_uuid,))
+    row = cursor.fetchone()
+    conn.close()
+    if row and row[0] == "confirmed":
+        return {"status": "confirmed"}
+    return {"status": "pending"}
+
+@router.post("/worker/register")
+async def register_worker(request: Request, db: DatabaseManager = Depends()):
     return {"status": "ok"}
 
 @router.post("/worker/models")
@@ -90,14 +140,14 @@ async def register_models(request: Request, db: DatabaseManager = Depends()):
     conn.close()
     return {"status": "ok", "registered_count": len(models_data)}
 
-@router.get("/clients")
-async def list_clients(db: DatabaseManager = Depends()):
+@router.get("/agents")
+async def list_agents(db: DatabaseManager = Depends()):
     conn = db.get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT ip, ssh_host, ssh_port, ssh_username, ssh_pkey_path, working_directory, ssh_host_key FROM allowed_ips WHERE ssh_host IS NOT NULL")
+    cursor.execute("SELECT uuid, ssh_host, ssh_port, ssh_username, ssh_pkey_path, ssh_host_key FROM registered_agents WHERE ssh_host IS NOT NULL")
     rows = cursor.fetchall()
     conn.close()
-    return {"clients": [
-        {"ip": r[0], "ssh_host": r[1], "ssh_port": r[2], "ssh_username": r[3], "ssh_pkey_path": r[4], "working_directory": r[5], "ssh_host_key": r[6]}
+    return {"agents": [
+        {"uuid": r[0], "ssh_host": r[1], "ssh_port": r[2], "ssh_username": r[3], "ssh_pkey_path": r[4], "ssh_host_key": r[5]}
         for r in rows
     ]}

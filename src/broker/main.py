@@ -30,21 +30,40 @@ app.dependency_overrides[load_config] = get_config
 app.dependency_overrides[DatabaseManager] = get_db
 app.dependency_overrides[TunnelManager] = get_tunnels
 
+from fastapi.responses import JSONResponse, FileResponse
+
+@app.get("/install")
+async def get_install_script():
+    script_path = os.path.join(os.path.dirname(__file__), "../../scripts/agent_manager.sh")
+    return FileResponse(script_path, media_type="text/x-shellscript")
+
+@app.get("/download/agent")
+async def download_agent():
+    agent_path = os.path.join(os.path.dirname(__file__), "../agent/headless_client.py")
+    return FileResponse(agent_path, media_type="text/x-python")
+
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     open_paths = [
-        "/register", "/register/ssh", "/clients", 
+        "/register", "/register/ssh", "/agents", 
         "/worker/register", "/worker/models", "/health", "/command/", "/chat/context",
-        "/admin", "/v1/models"
+        "/admin", "/v1/models", "/install", "/download"
     ]
     if any(request.url.path.startswith(p) for p in open_paths):
         return await call_next(request)
 
-    client_ip = request.client.host if request.client else None
-    if not client_ip or not db_manager.is_allowed(client_ip):
-        return JSONResponse(status_code=403, content={"detail": f"IP {client_ip} not registered."})
+    # For chat/completion routes, check X-Client-UUID
+    client_uuid = request.headers.get("X-Client-UUID")
+    if client_uuid:
+        # Permission check happens in the router for specific models
+        return await call_next(request)
 
-    return await call_next(request)
+    # For internal agent routes, check X-Agent-UUID
+    agent_uuid = request.headers.get("X-Agent-UUID")
+    if agent_uuid and db_manager.is_agent_registered(agent_uuid):
+        return await call_next(request)
+
+    return JSONResponse(status_code=403, content={"detail": "Unauthorized. Client or Agent UUID required."})
 
 # Include routers
 app.include_router(system.router)

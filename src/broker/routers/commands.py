@@ -6,24 +6,24 @@ router = APIRouter(prefix="/command", tags=["commands"])
 @router.post("/submit")
 async def submit_command(request: Request, db: DatabaseManager = Depends()):
     body = await request.json()
-    client_ip = body.get("client_ip")
+    agent_uuid = body.get("agent_uuid")
     command = body.get("command")
-    if not client_ip or not command:
-        raise HTTPException(status_code=400, detail="Missing client_ip or command")
+    if not agent_uuid or not command:
+        raise HTTPException(status_code=400, detail="Missing agent_uuid or command")
     
     conn = db.get_db()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO command_queue (client_ip, command) VALUES (?, ?)", (client_ip, command))
+    cursor.execute("INSERT INTO command_queue (agent_uuid, command) VALUES (?, ?)", (agent_uuid, command))
     command_id = cursor.lastrowid
     conn.commit()
     conn.close()
     return {"status": "ok", "command_id": command_id}
 
-@router.get("/pending/{client_ip}")
-async def get_pending_commands(client_ip: str, db: DatabaseManager = Depends()):
+@router.get("/pending/{agent_uuid}")
+async def get_pending_commands(agent_uuid: str, db: DatabaseManager = Depends()):
     conn = db.get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, command FROM command_queue WHERE client_ip = ? AND status = 'pending'", (client_ip,))
+    cursor.execute("SELECT id, command FROM command_queue WHERE agent_uuid = ? AND status = 'pending'", (agent_uuid,))
     rows = cursor.fetchall()
     conn.close()
     return {"commands": [{"id": r[0], "command": r[1]} for r in rows]}

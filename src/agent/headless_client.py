@@ -15,18 +15,31 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 class RangeCrawlerAgent:
-    def __init__(self, broker_url: str, working_dir: Optional[str] = None, username: Optional[str] = None):
+    def __init__(self, broker_url: str, username: Optional[str] = None):
         self.broker_url = broker_url.rstrip("/")
         self.username = username or getpass.getuser()
-        
-        # Default to / if user is root, otherwise current dir
-        if working_dir:
-            self.working_dir = os.path.abspath(working_dir)
-        else:
-            self.working_dir = "/" if self.username == "root" else os.getcwd()
-            
         self.hostname = socket.gethostname()
         self.os_info = f"{platform.system()} {platform.release()}"
+        self.uuid = self._get_or_create_uuid()
+
+    def _get_or_create_uuid(self) -> str:
+        """Read or generate a persistent unique ID for this agent."""
+        import uuid
+        uuid_path = os.path.join(os.path.expanduser("~"), ".rc_agent_id")
+        if os.path.exists(uuid_path):
+            try:
+                with open(uuid_path, "r") as f:
+                    return f.read().strip()
+            except Exception:
+                pass
+        
+        new_uuid = str(uuid.uuid4())
+        try:
+            with open(uuid_path, "w") as f:
+                f.write(new_uuid)
+        except Exception:
+            pass
+        return new_uuid
         
     def get_ssh_host_key(self) -> Optional[str]:
         """Read the local SSH host public key."""
@@ -70,73 +83,82 @@ class RangeCrawlerAgent:
             s.close()
         return ip
 
-    def authorize_worker(self, public_key: str):
+    def authorize_worker(self, public_key: str, temporary: bool = False):
         """Add the worker's public key to authorized_keys with strict permissions."""
         if not public_key:
             return
         
         try:
-            # Use the actual home directory of the registration user
-            if self.username == "root":
-                ssh_dir = "/root/.ssh"
-            else:
-                ssh_dir = os.path.expanduser(f"~{self.username}/.ssh")
-                if not os.path.exists(ssh_dir):
-                    ssh_dir = os.path.expanduser("~/.ssh")
-                
+            ssh_dir = os.path.expanduser("~/.ssh")
             auth_keys_path = os.path.join(ssh_dir, "authorized_keys")
                 
             # Ensure .ssh exists with 700
             if not os.path.exists(ssh_dir):
                 os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
-            else:
-                os.chmod(ssh_dir, 0o700)
+            
+            # Zero Trust constraints
+            restrictions = 'restrict,port-forwarding'
+            entry = f'{restrictions} {public_key} # RangeCrawler Session'
             
             # Check if already exists
             if os.path.exists(auth_keys_path):
                 with open(auth_keys_path, "r") as f:
                     if public_key in f.read():
-                        print(f"[*] Worker key already authorized in {auth_keys_path}")
                         return
             
             with open(auth_keys_path, "a") as f:
-                f.write(f"\n{public_key}\n")
+                f.write(f"\n{entry}\n")
             
             os.chmod(auth_keys_path, 0o600)
-            print(f"[+] Authorized worker key in {auth_keys_path}")
-        except PermissionError:
-            print(f"[-] ERROR: Permission denied writing to {ssh_dir}.")
-            print(f"    HINT: You are trying to register as user '{self.username}'.")
-            print("    Please run the agent with 'sudo' or check your permissions.")
+            print(f"[+] Authorized ephemeral key.")
+            
+            if temporary:
+                import threading
+                def cleanup():
+                    time.sleep(3600)
+                    self.remove_worker_key(public_key)
+                threading.Thread(target=cleanup, daemon=True).start()
         except Exception as e:
             print(f"[-] ERROR: Failed to authorize worker key: {e}")
+
+    def remove_worker_key(self, public_key: str):
+        """Remove a specific worker key from authorized_keys."""
+        try:
+            auth_keys_path = os.path.expanduser("~/.ssh/authorized_keys")
+            if not os.path.exists(auth_keys_path):
+                return
+            
+            with open(auth_keys_path, "r") as f:
+                lines = f.readlines()
+            
+            with open(auth_keys_path, "w") as f:
+                for line in lines:
+                    if public_key not in line:
+                        f.write(line)
+            print(f"[*] Cleaned up session key.")
+        except Exception as e:
+            print(f"[-] Error cleaning up key: {e}")
 
     def register_self(self, ssh_port: int = 22, pkey_path: Optional[str] = None):
         """Register this machine as a remote workspace on the broker."""
         local_ip = self.get_local_ip()
         host_key = self.get_ssh_host_key()
         print(f"[*] Identifying as {self.username}@{local_ip} ({self.os_info})")
+        print(f"[*] Agent UUID: {self.uuid}")
         
         payload = {
+            "agent_uuid": self.uuid,
             "ssh_host": local_ip,
             "ssh_port": ssh_port,
             "ssh_username": self.username,
             "ssh_pkey_path": pkey_path,
-            "ssh_host_key": host_key,
-            "working_directory": self.working_dir
+            "ssh_host_key": host_key
         }
         
         try:
             resp = httpx.post(f"{self.broker_url}/register/ssh", json=payload, timeout=10.0)
             if resp.status_code == 200:
-                data = resp.json()
                 print(f"[+] Successfully registered with broker at {self.broker_url}")
-                print(f"[+] Workspace set to: {self.working_dir}")
-                
-                worker_key = data.get("worker_public_key")
-                if worker_key:
-                    self.authorize_worker(worker_key)
-                
                 return True
             else:
                 print(f"[-] Registration failed: {resp.text}")
@@ -146,18 +168,29 @@ class RangeCrawlerAgent:
             return False
 
     def run_heartbeat(self, interval: int = 60):
-        """Keep the registration alive."""
+        """Keep the registration alive and poll for session handshakes."""
         print(f"[*] Starting heartbeat every {interval}s...")
         while True:
             try:
-                httpx.post(f"{self.broker_url}/register", timeout=5.0)
+                # 1. Heartbeat
+                httpx.post(f"{self.broker_url}/register", json={"agent_uuid": self.uuid}, timeout=5.0)
+                
+                # 2. Poll for handshakes
+                resp = httpx.get(f"{self.broker_url}/handshake/poll/{self.uuid}", timeout=5.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("status") == "pending":
+                        pub_key = data.get("public_key")
+                        print(f"[*] New session request. Authorizing ephemeral key...")
+                        self.authorize_worker(pub_key, temporary=True)
+                        httpx.post(f"{self.broker_url}/handshake/confirm", json={"agent_uuid": self.uuid}, timeout=5.0)
             except Exception as e: 
-                logger.warning(f"Registration failed: {e}")
+                logger.warning(f"Heartbeat/Handshake failed: {e}")
             time.sleep(interval)
 
-def run_agent(broker: str, working_dir: Optional[str] = None, user: Optional[str] = None, ssh_port: int = 22, pkey: Optional[str] = None, heartbeat: bool = False):
+def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey: Optional[str] = None, heartbeat: bool = False):
     """Entry point for the RangeCrawler agent."""
-    agent = RangeCrawlerAgent(broker, working_dir, username=user)
+    agent = RangeCrawlerAgent(broker, username=user)
     
     # 1. Self-Register
     if agent.register_self(ssh_port=ssh_port, pkey_path=pkey):
@@ -173,7 +206,6 @@ def run_agent(broker: str, working_dir: Optional[str] = None, user: Optional[str
 def main():
     parser = argparse.ArgumentParser(description="RangeCrawler Autonomous Agent")
     parser.add_argument("--broker", type=str, default="http://localhost:8005", help="URL of the RangeCrawler broker")
-    parser.add_argument("--dir", type=str, help="Working directory for the LLM (default: / if root, otherwise current dir)")
     parser.add_argument("--user", type=str, help="Username to register (default: current user)")
     parser.add_argument("--ssh-port", type=int, default=22, help="SSH port of this machine")
     parser.add_argument("--pkey", type=str, help="Path to the private key ON THE BROKER that accesses this machine")
@@ -183,7 +215,6 @@ def main():
 
     success = run_agent(
         broker=args.broker,
-        working_dir=args.dir,
         user=args.user,
         ssh_port=args.ssh_port,
         pkey=args.pkey,

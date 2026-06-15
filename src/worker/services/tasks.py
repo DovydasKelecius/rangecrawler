@@ -63,19 +63,59 @@ def process_generation_request(client_config, broker_url, ollama_url):
 
 ACTIVE_PROVISIONS: Dict[str, Any] = {}
 
-def handle_provisioning(client_config, provision_data):
-    client_ip = client_config["ip"]
-    if client_ip in ACTIVE_PROVISIONS:
-        prev = ACTIVE_PROVISIONS[client_ip]
+from .ssh_manager import setup_host_key, create_ephemeral_key, fetch_context, push_context
+
+def handle_provisioning(client_config, provision_data, broker_url):
+    agent_uuid = provision_data["agent_uuid"]
+    if agent_uuid in ACTIVE_PROVISIONS:
+        prev = ACTIVE_PROVISIONS[agent_uuid]
         prev["proxy_proc"].terminate()
         prev["tunnel_proc"].terminate()
     
+    # 1. Generate Ephemeral Key
+    pkey = create_ephemeral_key()
+    pub_key = f"{pkey.get_name()} {pkey.get_base64()}"
+    
+    # 2. Handshake Phase 1 & 2: Init via Broker
+    logger.info(f"Initiating handshake for agent {agent_uuid}")
+    resp = httpx.post(f"{broker_url}/handshake/init", json={"agent_uuid": agent_uuid, "public_key": pub_key}, timeout=10.0)
+    if resp.status_code != 200:
+        logger.error(f"Handshake init failed: {resp.text}")
+        return
+    
+    # 3. Wait for Handshake Phase 3: Agent Confirmation
+    for _ in range(60): # 60s timeout
+        v_resp = httpx.get(f"{broker_url}/handshake/verify/{agent_uuid}")
+        if v_resp.json().get("status") == "confirmed":
+            break
+        time.sleep(1)
+    else:
+        logger.error("Handshake confirmation timeout.")
+        return
+
+    # 4. Connection Phase: Establish Tunnel
     proxy_port = 11435
     proxy_proc = subprocess.Popen([sys.executable, "src/worker/shield_proxy.py", "--port", str(proxy_port)])  # nosec
-    tunnel_cmd = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes", "-N", "-R", f"{provision_data['target_port']}:localhost:{proxy_port}", f"{client_config['ssh_username']}@{client_config['ssh_host']}"]
+    
+    # Use ephemeral key for SSH
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+        pkey.write_private_key(f)
+        key_path = f.name
+    
+    tunnel_cmd = [
+        "ssh", "-i", key_path,
+        "-o", "StrictHostKeyChecking=no", 
+        "-o", "BatchMode=yes", 
+        "-N", "-R", f"{provision_data['target_port']}:localhost:{proxy_port}", 
+        f"{client_config['ssh_username']}@{client_config['ssh_host']}"
+    ]
     tunnel_proc = subprocess.Popen(tunnel_cmd)  # nosec
     
-    ACTIVE_PROVISIONS[client_ip] = {"proxy_proc": proxy_proc, "tunnel_proc": tunnel_proc, "start_time": time.time()}
+    # Cleanup temp key file after spawn (process keeps it in memory or we can delete after connect)
+    # Actually, keep it for now or use Paramiko for the tunnel to avoid disk
+    
+    ACTIVE_PROVISIONS[agent_uuid] = {"proxy_proc": proxy_proc, "tunnel_proc": tunnel_proc, "start_time": time.time(), "key_path": key_path}
 
 def cleanup_inactive_provisions():
     now = time.time()

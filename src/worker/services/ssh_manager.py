@@ -7,6 +7,10 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger("WorkerSSH")
 
+def create_ephemeral_key() -> paramiko.Ed25519Key:
+    """Generate a one-time ED25519 key pair for a secure session."""
+    return paramiko.Ed25519Key.generate()
+
 def get_worker_pkey():
     """Try to load the worker's private key, or generate one if missing."""
     key_paths = [

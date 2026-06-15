@@ -49,33 +49,33 @@ def worker_loop():
                 except Exception as e:
                     logger.warning(f"Failed to report models: {e}")
 
-            resp = httpx.get(f"{broker_url}/clients", timeout=10.0)
+            resp = httpx.get(f"{broker_url}/agents", timeout=10.0)
             if resp.status_code == 200:
-                clients = resp.json().get("clients", [])
+                agents = resp.json().get("agents", [])
                 if iteration % 10 == 0:
-                    logger.info(f"Heartbeat: {len(clients)} registered clients.")
+                    logger.info(f"Heartbeat: {len(agents)} registered agents.")
                 
-                for client in clients:
-                    client_ip = client['ip']
-                    logger.debug(f"Checking for tasks for {client_ip}...")
+                for agent in agents:
+                    agent_uuid = agent['uuid']
+                    logger.debug(f"Checking for tasks for {agent_uuid}...")
                     
                     # 1. Check for pending commands
-                    cmd_resp = httpx.get(f"{broker_url}/command/pending/{client_ip}", timeout=10.0)
+                    cmd_resp = httpx.get(f"{broker_url}/command/pending/{agent_uuid}", timeout=10.0)
                     if cmd_resp.status_code == 200:
                         tasks = cmd_resp.json().get("commands", [])
                         if tasks:
-                            logger.info(f"Found {len(tasks)} tasks for {client_ip}.")
+                            logger.info(f"Found {len(tasks)} tasks for {agent_uuid}.")
                         for cmd in tasks:
-                            execute_remote_command(client, cmd["id"], cmd["command"], broker_url)
+                            execute_remote_command(agent, cmd["id"], cmd["command"], broker_url)
                             try:
                                 data = json.loads(cmd["command"])
                                 if data.get("action") == "provision_isolated_ollama":
-                                    handle_provisioning(client, data)
+                                    handle_provisioning(agent, data, broker_url)
                             except Exception:
                                 pass  # nosec
                     
                     # 2. Check for generation requests (Context Sync Loop)
-                    process_generation_request(client, broker_url, ollama_url)
+                    process_generation_request(agent, broker_url, ollama_url)
                 
                 cleanup_inactive_provisions()
             
