@@ -9,19 +9,56 @@ import subprocess  # nosec
 import time
 from typing import Dict, Any
 
-from .ssh_manager import setup_host_key, get_worker_pkey, fetch_context, push_context
+from .ssh_manager import setup_host_key, create_ephemeral_key, fetch_context, push_context
 from .inference import worker_agent_loop
 
 logger = logging.getLogger("WorkerTasks")
 
-def execute_remote_command(client_config, command_id, command, broker_url):
+ACTIVE_PROVISIONS: Dict[str, Any] = {}
+SESSION_KEYS: Dict[str, Any] = {}
+
+import tempfile
+
+def get_ssh_session(agent_config, broker_url, scope="shell"):
+    agent_uuid = agent_config["uuid"]
+    # Check if we already have a confirmed session
+    if agent_uuid in SESSION_KEYS:
+        return SESSION_KEYS[agent_uuid]
+    
+    logger.info(f"Establishing {scope} session for {agent_uuid}")
+    pkey = create_ephemeral_key()
+    pub_key = f"{pkey.get_name()} {pkey.get_base64()}"
+    
+    try:
+        resp = httpx.post(f"{broker_url}/handshake/init", json={"agent_uuid": agent_uuid, "public_key": pub_key, "scope": scope}, timeout=10.0)
+        if resp.status_code != 200:
+            return None
+        
+        for _ in range(60):
+            v_resp = httpx.get(f"{broker_url}/handshake/verify/{agent_uuid}")
+            if v_resp.status_code == 200 and v_resp.json().get("status") == "confirmed":
+                with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+                    pkey.write_private_key_file(f.name)
+                    key_path = f.name
+                SESSION_KEYS[agent_uuid] = {"pkey": pkey, "path": key_path}
+                return SESSION_KEYS[agent_uuid]
+            time.sleep(1)
+    except Exception as e:
+        logger.error(f"Handshake error: {e}")
+    return None
+
+def execute_remote_command(agent_config, command_id, command, broker_url):
+    session = get_ssh_session(agent_config, broker_url, scope="shell")
+    if not session:
+        return False
+    
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
-    setup_host_key(ssh, client_config["ssh_host"], client_config.get("ssh_host_key"))
-    pkey = get_worker_pkey()
+    setup_host_key(ssh, agent_config["ssh_host"], agent_config.get("ssh_host_key"))
+    
     try:
-        full_command = f"cd {shlex.quote(client_config.get('working_directory', '.'))} && {command}"
-        ssh.connect(hostname=client_config["ssh_host"], port=client_config.get("ssh_port", 22), username=client_config["ssh_username"], pkey=pkey, timeout=10)
+        full_command = f"cd {shlex.quote(agent_config.get('working_directory', '.'))} && {command}"
+        ssh.connect(hostname=agent_config["ssh_host"], port=agent_config.get("ssh_port", 22), username=agent_config["ssh_username"], pkey=session["pkey"], timeout=10)
         _, stdout, stderr = ssh.exec_command(full_command)  # nosec
         result = f"STDOUT:\n{stdout.read().decode()}\nSTDERR:\n{stderr.read().decode()}"
         httpx.post(f"{broker_url}/command/result", json={"command_id": command_id, "result": result}, timeout=10.0)
@@ -32,16 +69,19 @@ def execute_remote_command(client_config, command_id, command, broker_url):
     finally:
         ssh.close()
 
-def process_generation_request(client_config, broker_url, ollama_url):
+def process_generation_request(agent_config, broker_url, ollama_url):
+    session = get_ssh_session(agent_config, broker_url, scope="shell")
+    if not session:
+        return
+    
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
-    setup_host_key(ssh, client_config["ssh_host"], client_config.get("ssh_host_key"))
-    pkey = get_worker_pkey()
+    setup_host_key(ssh, agent_config["ssh_host"], agent_config.get("ssh_host_key"))
     try:
-        ssh.connect(hostname=client_config["ssh_host"], port=client_config.get("ssh_port", 22), username=client_config["ssh_username"], pkey=pkey, timeout=10)
+        ssh.connect(hostname=agent_config["ssh_host"], port=agent_config.get("ssh_port", 22), username=agent_config["ssh_username"], pkey=session["pkey"], timeout=10)
         sftp = ssh.open_sftp()
         instruction = None
-        remote_path = client_config.get("working_directory", ".")
+        remote_path = agent_config.get("working_directory", ".")
         instr_file = os.path.join(remote_path, "instruction.json")
         try:
             with sftp.open(instr_file, "r") as f:
@@ -57,70 +97,44 @@ def process_generation_request(client_config, broker_url, ollama_url):
             if response_msg:
                 context["messages"].append(response_msg)
                 push_context(ssh, remote_path, context)
-                httpx.post(f"{broker_url}/chat/context/{client_config['ip']}", json=context, timeout=5.0)
+                # Note: client_ip here might be client_uuid in new flow, but we use what we have
+                httpx.post(f"{broker_url}/chat/context/{agent_config.get('uuid')}", json=context, timeout=5.0)
+    except Exception as e:
+        logger.error(f"Generation error for {agent_config.get('uuid')}: {e}")
     finally:
         ssh.close()
 
-ACTIVE_PROVISIONS: Dict[str, Any] = {}
-
-from .ssh_manager import setup_host_key, create_ephemeral_key, fetch_context, push_context
-
-def handle_provisioning(client_config, provision_data, broker_url):
+def handle_provisioning(agent_config, provision_data, broker_url):
     agent_uuid = provision_data["agent_uuid"]
     if agent_uuid in ACTIVE_PROVISIONS:
         prev = ACTIVE_PROVISIONS[agent_uuid]
         prev["proxy_proc"].terminate()
         prev["tunnel_proc"].terminate()
     
-    # 1. Generate Ephemeral Key
-    pkey = create_ephemeral_key()
-    pub_key = f"{pkey.get_name()} {pkey.get_base64()}"
-    
-    # 2. Handshake Phase 1 & 2: Init via Broker
-    logger.info(f"Initiating handshake for agent {agent_uuid}")
-    resp = httpx.post(f"{broker_url}/handshake/init", json={"agent_uuid": agent_uuid, "public_key": pub_key}, timeout=10.0)
-    if resp.status_code != 200:
-        logger.error(f"Handshake init failed: {resp.text}")
-        return
-    
-    # 3. Wait for Handshake Phase 3: Agent Confirmation
-    for _ in range(60): # 60s timeout
-        v_resp = httpx.get(f"{broker_url}/handshake/verify/{agent_uuid}")
-        if v_resp.json().get("status") == "confirmed":
-            break
-        time.sleep(1)
-    else:
-        logger.error("Handshake confirmation timeout.")
+    # Provisions need tunnel scope
+    session = get_ssh_session(agent_config, broker_url, scope="tunnel")
+    if not session:
+        logger.error(f"Failed to get tunnel session for {agent_uuid}")
         return
 
-    # 4. Connection Phase: Establish Tunnel
     proxy_port = 11435
     proxy_proc = subprocess.Popen([sys.executable, "src/worker/shield_proxy.py", "--port", str(proxy_port)])  # nosec
     
-    # Use ephemeral key for SSH
-    import tempfile
-    with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
-        pkey.write_private_key(f)
-        key_path = f.name
-    
     tunnel_cmd = [
-        "ssh", "-i", key_path,
+        "ssh", "-i", session["path"],
         "-o", "StrictHostKeyChecking=no", 
         "-o", "BatchMode=yes", 
         "-N", "-R", f"{provision_data['target_port']}:localhost:{proxy_port}", 
-        f"{client_config['ssh_username']}@{client_config['ssh_host']}"
+        f"{agent_config['ssh_username']}@{agent_config['ssh_host']}"
     ]
     tunnel_proc = subprocess.Popen(tunnel_cmd)  # nosec
     
-    # Cleanup temp key file after spawn (process keeps it in memory or we can delete after connect)
-    # Actually, keep it for now or use Paramiko for the tunnel to avoid disk
-    
-    ACTIVE_PROVISIONS[agent_uuid] = {"proxy_proc": proxy_proc, "tunnel_proc": tunnel_proc, "start_time": time.time(), "key_path": key_path}
+    ACTIVE_PROVISIONS[agent_uuid] = {"proxy_proc": proxy_proc, "tunnel_proc": tunnel_proc, "start_time": time.time(), "key_path": session["path"]}
 
 def cleanup_inactive_provisions():
     now = time.time()
-    to_remove = [ip for ip, data in ACTIVE_PROVISIONS.items() if now - data["start_time"] > 3600]
-    for ip in to_remove:
-        data = ACTIVE_PROVISIONS.pop(ip)
+    to_remove = [uuid for uuid, data in ACTIVE_PROVISIONS.items() if now - data["start_time"] > 3600]
+    for uuid in to_remove:
+        data = ACTIVE_PROVISIONS.pop(uuid)
         data["proxy_proc"].terminate()
         data["tunnel_proc"].terminate()

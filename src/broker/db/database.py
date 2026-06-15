@@ -43,6 +43,7 @@ class DatabaseManager:
                     agent_uuid TEXT PRIMARY KEY,
                     public_key TEXT,
                     challenge TEXT,
+                    scope TEXT DEFAULT 'shell',
                     status TEXT DEFAULT 'pending',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )

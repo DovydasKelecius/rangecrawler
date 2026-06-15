@@ -64,6 +64,7 @@ async def init_handshake(request: Request, db: DatabaseManager = Depends()):
     body = await request.json()
     agent_uuid = body.get("agent_uuid")
     public_key = body.get("public_key")
+    scope = body.get("scope", "shell")
     if not agent_uuid or not public_key:
         raise HTTPException(status_code=400, detail="Missing agent_uuid or public_key")
     
@@ -75,9 +76,9 @@ async def init_handshake(request: Request, db: DatabaseManager = Depends()):
     cursor = conn.cursor()
     # Store pending handshake
     cursor.execute('''
-        INSERT OR REPLACE INTO pending_handshakes (agent_uuid, public_key, challenge, status)
-        VALUES (?, ?, ?, 'pending')
-    ''', (agent_uuid, public_key, challenge))
+        INSERT OR REPLACE INTO pending_handshakes (agent_uuid, public_key, challenge, scope, status)
+        VALUES (?, ?, ?, ?, 'pending')
+    ''', (agent_uuid, public_key, challenge, scope))
     conn.commit()
     conn.close()
     
@@ -87,12 +88,12 @@ async def init_handshake(request: Request, db: DatabaseManager = Depends()):
 async def poll_handshake(agent_uuid: str, db: DatabaseManager = Depends()):
     conn = db.get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT public_key, challenge FROM pending_handshakes WHERE agent_uuid = ? AND status = 'pending'", (agent_uuid,))
+    cursor.execute("SELECT public_key, challenge, scope FROM pending_handshakes WHERE agent_uuid = ? AND status = 'pending'", (agent_uuid,))
     row = cursor.fetchone()
     conn.close()
     if not row:
         return {"status": "none"}
-    return {"status": "pending", "public_key": row[0], "challenge": row[1]}
+    return {"status": "pending", "public_key": row[0], "challenge": row[1], "scope": row[2]}
 
 @router.post("/handshake/confirm")
 async def confirm_handshake(request: Request, db: DatabaseManager = Depends()):

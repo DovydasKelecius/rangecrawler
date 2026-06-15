@@ -13,24 +13,11 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - WORKER - %(message)s")
 logger = logging.getLogger("OllamaWorker")
 
-def register_worker_key(broker_url):
-    pkey = get_worker_pkey()
-    if not pkey:
-        return
-    pub_key = f"{pkey.get_name()} {pkey.get_base64()}"
-    try:
-        resp = httpx.post(f"{broker_url}/worker/register", json={"public_key": pub_key}, timeout=10.0)
-        if resp.status_code == 200:
-            logger.info("Worker public key registered with broker.")
-    except Exception as e:
-        logger.error(f"Failed to register key: {e}")
-
 def worker_loop():
     broker_url = os.getenv("BROKER_URL", "http://localhost:8005")
     ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
     
     logger.info(f"[READY] Worker connected to {broker_url}. Listening for prompts...")
-    register_worker_key(broker_url)
     
     iteration = 0
     while True:

@@ -83,8 +83,8 @@ class RangeCrawlerAgent:
             s.close()
         return ip
 
-    def authorize_worker(self, public_key: str, temporary: bool = False):
-        """Add the worker's public key to authorized_keys with strict permissions."""
+    def authorize_worker(self, public_key: str, temporary: bool = False, scope: str = "shell"):
+        """Add the worker's public key to authorized_keys with scope-based permissions."""
         if not public_key:
             return
         
@@ -96,9 +96,14 @@ class RangeCrawlerAgent:
             if not os.path.exists(ssh_dir):
                 os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
             
-            # Zero Trust constraints
-            restrictions = 'restrict,port-forwarding'
-            entry = f'{restrictions} {public_key} # RangeCrawler Session'
+            # Zero Trust constraints based on scope
+            if scope == "tunnel":
+                restrictions = 'restrict,port-forwarding'
+            else:
+                # Basic shell access, but no pty/x11/agent
+                restrictions = 'no-pty,no-X11-forwarding,no-agent-forwarding'
+                
+            entry = f'{restrictions} {public_key} # RangeCrawler Session ({scope})'
             
             # Check if already exists
             if os.path.exists(auth_keys_path):
@@ -181,8 +186,9 @@ class RangeCrawlerAgent:
                     data = resp.json()
                     if data.get("status") == "pending":
                         pub_key = data.get("public_key")
-                        print(f"[*] New session request. Authorizing ephemeral key...")
-                        self.authorize_worker(pub_key, temporary=True)
+                        scope = data.get("scope", "shell")
+                        print(f"[*] New session request ({scope}). Authorizing ephemeral key...")
+                        self.authorize_worker(pub_key, temporary=True, scope=scope)
                         httpx.post(f"{self.broker_url}/handshake/confirm", json={"agent_uuid": self.uuid}, timeout=5.0)
             except Exception as e: 
                 logger.warning(f"Heartbeat/Handshake failed: {e}")
