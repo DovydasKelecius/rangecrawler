@@ -19,87 +19,84 @@ class DatabaseManager:
 
     def _init_db(self, config: AppConfig):
         db_file = Path(self.db_path)
-        if db_file.is_dir():
-            raise IsADirectoryError(f"Database path '{self.db_path}' is a directory.")
-        
         db_file.parent.mkdir(parents=True, exist_ok=True)
         
-        try:
-            conn = self.get_db()
-            cursor = conn.cursor()
+        conn = self.get_db()
+        cursor = conn.cursor()
+        
+        # Enable WAL mode for better concurrency
+        cursor.execute("PRAGMA journal_mode=WAL")
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS registered_agents (
+                uuid TEXT PRIMARY KEY,
+                registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                ssh_host TEXT,
+                ssh_port INTEGER,
+                ssh_username TEXT,
+                ssh_pkey_path TEXT,
+                ssh_host_key TEXT
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pending_handshakes (
+                agent_uuid TEXT PRIMARY KEY,
+                public_key TEXT,
+                challenge TEXT,
+                scope TEXT DEFAULT 'shell',
+                status TEXT DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS worker_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_key TEXT,
+                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS command_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_uuid TEXT,
+                command TEXT,
+                status TEXT DEFAULT 'pending',
+                result TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS models_registry (
+                id TEXT PRIMARY KEY,
+                remote_url TEXT NOT NULL,
+                ssh_host TEXT,
+                ssh_port INTEGER DEFAULT 22,
+                ssh_username TEXT,
+                ssh_pkey_path TEXT,
+                description TEXT,
+                is_active INTEGER DEFAULT 1
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS client_permissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_uuid TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                is_active INTEGER DEFAULT 1,
+                UNIQUE(client_uuid, model_id)
+            )
+        ''')
+        conn.commit()
+        
+        # Sync models from config.yaml into DB
+        for m in config.models:
             cursor.execute('''
-                CREATE TABLE IF NOT EXISTS registered_agents (
-                    uuid TEXT PRIMARY KEY,
-                    registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    ssh_host TEXT,
-                    ssh_port INTEGER,
-                    ssh_username TEXT,
-                    ssh_pkey_path TEXT,
-                    ssh_host_key TEXT
-                )
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS pending_handshakes (
-                    agent_uuid TEXT PRIMARY KEY,
-                    public_key TEXT,
-                    challenge TEXT,
-                    scope TEXT DEFAULT 'shell',
-                    status TEXT DEFAULT 'pending',
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS worker_keys (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    public_key TEXT,
-                    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS command_queue (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    agent_uuid TEXT,
-                    command TEXT,
-                    status TEXT DEFAULT 'pending',
-                    result TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS models_registry (
-                    id TEXT PRIMARY KEY,
-                    remote_url TEXT NOT NULL,
-                    ssh_host TEXT,
-                    ssh_port INTEGER DEFAULT 22,
-                    ssh_username TEXT,
-                    ssh_pkey_path TEXT,
-                    description TEXT,
-                    is_active INTEGER DEFAULT 1
-                )
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS client_permissions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    client_uuid TEXT NOT NULL,
-                    model_id TEXT NOT NULL,
-                    is_active INTEGER DEFAULT 1,
-                    UNIQUE(client_uuid, model_id)
-                )
-            ''')
-            conn.commit()
-            
-            # Sync models from config.yaml into DB
-            for m in config.models:
-                cursor.execute('''
-                    INSERT OR IGNORE INTO models_registry (id, remote_url, ssh_host, ssh_username, ssh_pkey_path)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (m.id, m.remote_url, m.ssh_host, m.ssh_username, m.ssh_pkey_path))
-            
-            conn.commit()
-            conn.close()
-        except sqlite3.Error as e:
-            logger.error(f"Failed to initialize database at {self.db_path}: {e}")
-            raise
+                INSERT OR IGNORE INTO models_registry (id, remote_url, ssh_host, ssh_username, ssh_pkey_path)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (m.id, m.remote_url, m.ssh_host, m.ssh_username, m.ssh_pkey_path))
+        
+        conn.commit()
+        conn.close()
 
     def get_models(self) -> Dict[str, ModelConfig]:
         """Fetch all active models from the database."""
