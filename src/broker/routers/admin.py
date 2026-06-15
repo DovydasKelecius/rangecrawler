@@ -38,13 +38,12 @@ async def grant_permission(perm: ClientPermission, db: DatabaseManager = Depends
     cursor = conn.cursor()
     cursor.execute('''
         INSERT INTO client_permissions (
-            client_uuid, model_id, allow_tools, is_active
-        ) VALUES (?, ?, ?, ?)
+            client_uuid, model_id, is_active
+        ) VALUES (?, ?, ?)
         ON CONFLICT(client_uuid, model_id) DO UPDATE SET
-            allow_tools=excluded.allow_tools,
             is_active=excluded.is_active
     ''', (
-        perm.client_uuid, perm.model_id, int(perm.allow_tools), int(perm.is_active)
+        perm.client_uuid, perm.model_id, int(perm.is_active)
     ))
     conn.commit()
     conn.close()
