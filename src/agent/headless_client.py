@@ -197,20 +197,6 @@ class RangeCrawlerAgent:
                 logger.warning(f"Heartbeat/Handshake failed: {e}")
                 time.sleep(10) # Wait longer on error
 
-def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey: Optional[str] = None, heartbeat: bool = False):
-    """Entry point for the RangeCrawler agent."""
-    agent = RangeCrawlerAgent(broker, username=user)
-    
-    # 1. Self-Register
-    if agent.register_self(ssh_port=ssh_port, pkey_path=pkey):
-        # 2. If successful and heartbeat requested, stay alive
-        if heartbeat:
-            agent.run_heartbeat(interval=600)
-        else:
-            print("[+] Done. Broker is now configured to use this machine.")
-            return True
-    return False
-
     def check_status(self):
         """Check for active tunnels and session keys."""
         print(f"[*] Agent UUID: {self.uuid}")
@@ -247,6 +233,19 @@ def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey:
         except Exception:
             pass
 
+def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey: Optional[str] = None, heartbeat: bool = False):
+    """Entry point for the RangeCrawler agent."""
+    agent = RangeCrawlerAgent(broker, username=user)
+    
+    # 1. Self-Register
+    if agent.register_self(ssh_port=ssh_port, pkey_path=pkey):
+        # 2. If successful and heartbeat requested, stay alive
+        if heartbeat:
+            agent.run_heartbeat(interval=600)
+        else:
+            print("[+] Done. Broker is now configured to use this machine.")
+            return True
+    return False
 
 def main():
     parser = argparse.ArgumentParser(description="RangeCrawler Autonomous Agent")

@@ -194,6 +194,43 @@ def admin_permissions(
     except Exception as e:
         typer.echo(f"Connection failed: {e}")
 
+@admin_app.command("permit")
+def admin_permit(
+    uuid: str = typer.Argument(..., help="Agent UUID to permit"),
+    permit: bool = typer.Option(True, help="Set to False to revoke permission"),
+    broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="Broker URL")
+):
+    """Whitelist an agent for automatic reverse tunneling."""
+    params = {"agent_uuid": uuid, "permit": permit}
+    try:
+        resp = httpx.post(f"{broker_url}/admin/agent/permit", params=params, timeout=10.0)
+        if resp.status_code == 200:
+            status = "Permitted" if permit else "Revoked"
+            typer.echo(f"Successfully {status} agent {uuid}")
+        else:
+            typer.echo(f"Error: {resp.text}")
+    except Exception as e:
+        typer.echo(f"Connection failed: {e}")
+
+@admin_app.command("agents")
+def admin_agents(
+    broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="Broker URL")
+):
+    """List all registered agents and their permit status."""
+    try:
+        resp = httpx.get(f"{broker_url}/admin/agents", timeout=10.0)
+        if resp.status_code == 200:
+            agents = resp.json().get("agents", [])
+            typer.echo(f"{'AGENT UUID':<40} | {'HOST':<15} | {'PERMITTED':<10}")
+            typer.echo("-" * 70)
+            for a in agents:
+                perm = "YES" if a['is_permitted'] else "NO"
+                typer.echo(f"{a['uuid']:<40} | {a['ssh_host']:<15} | {perm:<10}")
+        else:
+            typer.echo(f"Error: {resp.text}")
+    except Exception as e:
+        typer.echo(f"Connection failed: {e}")
+
 app.add_typer(admin_app, name="admin")
 app.add_typer(client_app, name="client")
 
