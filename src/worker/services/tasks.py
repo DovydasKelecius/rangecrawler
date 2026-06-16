@@ -21,9 +21,10 @@ import tempfile
 
 def get_ssh_session(agent_config, broker_url, scope="shell"):
     agent_uuid = agent_config["uuid"]
-    # Check if we already have a confirmed session
-    if agent_uuid in SESSION_KEYS:
-        return SESSION_KEYS[agent_uuid]
+    session_id = f"{agent_uuid}_{scope}"
+    # Check if we already have a confirmed session for THIS scope
+    if session_id in SESSION_KEYS:
+        return SESSION_KEYS[session_id]
     
     logger.info(f"Establishing {scope} session for {agent_uuid}")
     pkey = create_ephemeral_key()
@@ -41,8 +42,8 @@ def get_ssh_session(agent_config, broker_url, scope="shell"):
                 with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
                     pkey.write_private_key_file(f.name)
                     key_path = f.name
-                SESSION_KEYS[agent_uuid] = {"pkey": pkey, "path": key_path}
-                return SESSION_KEYS[agent_uuid]
+                SESSION_KEYS[session_id] = {"pkey": pkey, "path": key_path}
+                return SESSION_KEYS[session_id]
         except httpx.ReadTimeout:
             pass # Expected if not confirmed yet
     except Exception as e:
@@ -128,15 +129,17 @@ def handle_provisioning(agent_config, provision_data, broker_url):
         return # Handshake probably not confirmed yet
 
     proxy_port = 11435
+    logger.info(f"Starting Shield Proxy on {proxy_port} for {agent_uuid}")
     proxy_proc = subprocess.Popen([sys.executable, "src/worker/shield_proxy.py", "--port", str(proxy_port)])  # nosec
     
     tunnel_cmd = [
-        "ssh", "-i", session["path"],
+        "ssh", "-v", "-i", session["path"],
         "-o", "StrictHostKeyChecking=no", 
         "-o", "BatchMode=yes", 
         "-N", "-R", f"{provision_data['target_port']}:localhost:{proxy_port}", 
         f"{agent_config['ssh_username']}@{agent_config['ssh_host']}"
     ]
+    logger.info(f"Starting Tunnel: {' '.join(tunnel_cmd)}")
     tunnel_proc = subprocess.Popen(tunnel_cmd)  # nosec
     
     ACTIVE_PROVISIONS[agent_uuid] = {"proxy_proc": proxy_proc, "tunnel_proc": tunnel_proc, "start_time": time.time(), "key_path": session["path"]}
