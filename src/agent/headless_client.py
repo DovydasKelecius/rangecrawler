@@ -250,6 +250,33 @@ def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey:
             return True
     return False
 
+    def list_remote_models(self):
+        """Fetch whitelisted models from the worker via the reverse tunnel."""
+        print(f"[*] Querying available models from tunnel (localhost:11434)...")
+        try:
+            resp = httpx.get("http://localhost:11434/api/tags", timeout=5.0)
+            if resp.status_code == 200:
+                models = resp.json().get("models", [])
+                if not models:
+                    print("[-] No models found on worker.")
+                    return
+                
+                print(f"[+] Available Models ({len(models)}):")
+                print(f"{'NAME':<20} | {'SIZE':<10} | {'MODIFIED'}")
+                print("-" * 50)
+                for m in models:
+                    name = m.get("name", "unknown")
+                    size_gb = m.get("size", 0) / (1024**3)
+                    modified = m.get("modified_at", "unknown")[:10]
+                    print(f"{name:<20} | {size_gb:>8.2f} GB | {modified}")
+            else:
+                print(f"[-] Failed to list models: {resp.status_code}")
+                if resp.status_code == 403:
+                    print("    (Access denied by Shield Proxy)")
+        except Exception as e:
+            print(f"[-] Error: Could not connect to local tunnel. Is the reverse tunnel active?")
+            print(f"    Details: {e}")
+
 def main():
     parser = argparse.ArgumentParser(description="RangeCrawler Autonomous Agent")
     parser.add_argument("--broker", type=str, default="http://localhost:8005", help="URL of the RangeCrawler broker")
@@ -258,6 +285,7 @@ def main():
     parser.add_argument("--pkey", type=str, help="Path to the private key ON THE BROKER that accesses this machine")
     parser.add_argument("--heartbeat", action="store_true", help="Run in heartbeat mode to keep session alive")
     parser.add_argument("--status", action="store_true", help="Check local agent and tunnel status")
+    parser.add_argument("--models", action="store_true", help="List models available via the tunnel")
     
     args = parser.parse_args()
 
@@ -265,6 +293,10 @@ def main():
 
     if args.status:
         agent.check_status()
+        return
+    
+    if args.models:
+        agent.list_remote_models()
         return
 
     success = run_agent(

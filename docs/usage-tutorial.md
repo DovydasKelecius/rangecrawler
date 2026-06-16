@@ -1,96 +1,53 @@
-# RangeCrawler: Operational Tutorial and User Manual
+# RangeCrawler Usage Tutorial
 
 ## 1. Introduction
+This tutorial covers the operational workflow for using RangeCrawler in a distributed environment.
 
-This tutorial provides a systematic methodology for interacting with the RangeCrawler ecosystem. It is divided into two primary sections: the **Administrator's Perspective**, focusing on system governance, resource allocation, and monitoring; and the **Client's Perspective**, focusing on model interaction, task execution, and resource provisioning.
-
----
-
-## 2. Administrator's Perspective: System Governance
-
-The Administrator is responsible for the integrity of the brokerage system, ensuring that computational resources (LLMs) are correctly registered and that client access is governed by strict security policies.
-
-### 2.1. Model Registry Management
-
-Before any client interaction can occur, models must be registered within the Broker's database. Models are typically added via the `config.yaml` file during initialization, but their status can be audited via the CLI:
+## 2. Deploying the Agent
+The fastest way to deploy an agent on a remote VM is using the one-liner provided by the Broker:
 
 ```bash
-python3 src/main.py admin models
+curl -sSL http://<BROKER_IP>:8005/install | bash -s -- http://<BROKER_IP>:8005
 ```
 
-This command provides a listing of all active models and their associated remote inference URLs (typically pointing to Worker nodes).
+This command:
+- Sets up a virtual environment in `~/.rangecrawler/`.
+- Downloads the `headless_client.py` script.
+- Installs a `systemd` service for background execution.
+- Configures an `rc-agent` alias for easy management.
 
-### 2.2. Client Permission Arbitration
-
-RangeCrawler operates on a "Zero Trust" principle by default. Access to any model must be explicitly granted to a client's IP address.
-
-**Procedure for Granting Access:**
-To authorize a client (IP: `192.168.1.50`) to utilize the `llama3` model with a total usage quota of one hour (3600 seconds), execute:
+## 3. Whitelisting the Agent
+By default, the Broker registers new agents but does not permit them to establish tunnels. An administrator must whitelist the agent:
 
 ```bash
-python3 src/main.py admin grant 192.168.1.50 llama3 --quota 3600 --tools
+python3 src/main.py admin permit <AGENT_UUID>
 ```
 
-The `--tools` flag indicates that the client is permitted to execute tool-based tasks (e.g., remote shell commands) via the LLM.
+To find the Agent UUID, run `rc-agent --status` on the target machine or `python3 src/main.py admin agents` on the Broker.
 
-### 2.3. Usage Auditing and Monitoring
+## 4. Automatic Tunneling
+Once an agent is permitted, the **Worker** will automatically establish a reverse SSH tunnel. This tunnel:
+- Maps the Agent's local port `11434` to the Worker's **Shield Proxy**.
+- Allows the Agent to perform inference using models hosted on the Worker.
+- Restricts access to sensitive administrative endpoints (like model pulling or deletion).
 
-Administrators can monitor the real-time usage and remaining quotas of all registered clients:
+## 5. Verifying Connectivity
+On the Agent machine, you can verify the tunnel status:
 
 ```bash
-python3 src/main.py admin permissions
+# Check if the tunnel is active
+rc-agent --status
+
+# Test inference through the tunnel
+curl http://localhost:11434/api/generate -d '{
+  "model": "phi3",
+  "prompt": "Hello!",
+  "stream": false
+}'
 ```
 
-This report facilitates the identification of resource exhaustion and ensures compliance with allocated computational budgets.
-
----
-
-## 3. Client's Perspective: Resource Interaction
-
-The Client interacts with the Broker to perform inference tasks, execute remote operations, and manage their local agent workspace.
-
-### 3.1. Workspace Registration via Agent
-
-A client must first establish a secure workspace by running the RangeCrawler Agent. This enables the system to perform remote operations on the client's behalf:
-
-```bash
-python3 src/main.py agent --broker http://<BROKER_IP>:8005
-```
-
-Once registered, the Broker identifies the client's IP and prepares the secure SSH tunnel for the Worker.
-
-### 3.2. Synchronous Interaction (Chat Mode)
-
-Clients can engage in a stateful dialogue with an authorized model using the `chat` sub-command:
-
-```bash
-python3 src/main.py client chat --model llama3
-```
-
-This interface supports continuous context management, allowing for complex multi-turn reasoning within the terminal.
-
-### 3.3. Resource Provisioning
-
-For tasks requiring isolated computational resources or specific model configurations, clients can request a provisioned instance:
-
-```bash
-python3 src/main.py client provision llama3 --timeout 60
-```
-
-This command signals the Worker to prepare a dedicated environment for the requested model, ensuring high availability and isolation.
-
-### 3.4. Remote Task Execution
-
-Clients can dispatch arbitrary shell commands to be executed within their registered workspace via the Broker:
-
-```bash
-python3 src/main.py client run "ls -la /app/data" --ip <AGENT_IP>
-```
-
-The system handles the command queuing, remote execution through the secure tunnel, and returns the output to the client's terminal.
-
----
-
-## 4. Conclusion
-
-By adhering to these operational protocols, Administrators can ensure a secure and efficient brokerage environment, while Clients can leverage the full power of distributed LLMs and remote agent orchestration. This systematic approach to usage maintains the integrity and scalability of the RangeCrawler framework.
+## 6. Troubleshooting
+- **AttributeError: check_status**: Ensure you have the latest `headless_client.py` by re-running the installer.
+- **Tunnel Not Open**: Check if the agent is permitted (`rc-agent --status` should show `PERMITTED: YES` in the admin view).
+- **Ollama Signal Killed**: Usually indicates the Worker machine is out of memory (OOM). Check `docker logs` or `dmesg` on the Worker.
+- **403 Forbidden**: You are attempting to access a blocked endpoint (e.g., trying to `pull` a model from an Agent). Only inference endpoints are whitelisted.
