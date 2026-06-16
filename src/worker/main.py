@@ -22,19 +22,21 @@ def worker_loop():
     iteration = 0
     while True:
         try:
-            if iteration % 60 == 0: # Report models every 5 minutes
+            # Report models every 10 iterations (approx every 50 seconds)
+            if iteration % 10 == 0:
                 models = get_ollama_models(ollama_url)
-                logger.debug(f"Found models: {models}")
-                try:
-                    httpx.post(
-                        f"{broker_url}/worker/models", 
-                        json={"models": [{"id": m, "remote_url": ollama_url} for m in models]}, 
-                        timeout=5.0
-                    )
-                    if models:
-                        logger.info(f"Refreshed {len(models)} models with broker.")
-                except Exception as e:
-                    logger.warning(f"Failed to report models: {e}")
+                if models:
+                    logger.info(f"Reporting {len(models)} models to broker...")
+                    try:
+                        httpx.post(
+                            f"{broker_url}/worker/models", 
+                            json={"models": [{"id": m, "remote_url": ollama_url} for m in models]}, 
+                            timeout=5.0
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to report models: {e}")
+                else:
+                    logger.warning("No models found on Ollama to report.")
 
             resp = httpx.get(f"{broker_url}/agents", timeout=10.0)
             if resp.status_code == 200:
