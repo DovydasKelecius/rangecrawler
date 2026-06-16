@@ -62,13 +62,23 @@ When deploying via Docker Compose, the **Worker** utilizes `network_mode: host` 
 
 ## 6. Component-Specific Execution
 
-### 6.1. Starting the Broker
+### 6.1. Infrastructure Services (Broker & Worker)
 
-The Broker must be the first component initialized to facilitate subsequent registrations.
+For production or background execution on the main server, use the service setup script. This creates `systemd` services and adds CLI aliases.
 
 ```bash
-python3 src/main.py broker --host 0.0.0.0 --port 8005
+chmod +x scripts/setup_services.sh
+./scripts/setup_services.sh
+source ~/.bashrc
 ```
+
+#### 6.1.1. Management Commands
+
+| Action | Command |
+| :--- | :--- |
+| **Broker Logs** | `journalctl -u rangecrawler-broker -f` |
+| **Worker Logs** | `journalctl -u rangecrawler-worker -f` |
+| **Manual Start** | `rc-broker` or `rc-worker` |
 
 ### 6.2. Deploying the Agent
 

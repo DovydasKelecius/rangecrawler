@@ -58,10 +58,16 @@ EOF
 
 sudo systemctl daemon-reload
 
-echo "[+] Services created successfully."
+# 3. Add easy CLI aliases
+echo "[*] Adding aliases to .bashrc..."
+echo "alias rc-broker='$VENV_DIR/bin/python3 $REPO_DIR/src/main.py broker'" >> "$HOME/.bashrc"
+echo "alias rc-worker='$VENV_DIR/bin/python3 $REPO_DIR/src/main.py worker'" >> "$HOME/.bashrc"
+
+echo "[+] Services created and aliases added successfully."
 echo "[*] Management commands:"
-echo "    Broker: sudo systemctl enable --now rangecrawler-broker"
-echo "    Worker: sudo systemctl enable --now rangecrawler-worker"
+echo "    Broker: sudo systemctl status rangecrawler-broker"
+echo "    Worker: sudo systemctl status rangecrawler-worker"
+echo "    Manual: rc-broker --help | rc-worker --help"
 echo ""
 echo "[*] View logs:"
 echo "    journalctl -u rangecrawler-broker -f"
