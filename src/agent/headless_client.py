@@ -209,14 +209,13 @@ def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey:
         else:
             print("[+] Done. Broker is now configured to use this machine.")
             return True
-    else:
-        return False
+    return False
 
     def check_status(self):
         """Check for active tunnels and session keys."""
         print(f"[*] Agent UUID: {self.uuid}")
         print(f"[*] Broker: {self.broker_url}")
-        
+
         # 1. Check authorized_keys for RC sessions
         auth_keys = os.path.expanduser("~/.ssh/authorized_keys")
         sessions = []
@@ -225,7 +224,7 @@ def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey:
                 for line in f:
                     if "RangeCrawler Session" in line:
                         sessions.append(line.strip())
-        
+
         if sessions:
             print(f"[+] Active Sessions ({len(sessions)}):")
             for s in sessions:
@@ -247,6 +246,7 @@ def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey:
                 print("[-] Tunnel: No reverse tunnel on 11434.")
         except Exception:
             pass
+
 
 def main():
     parser = argparse.ArgumentParser(description="RangeCrawler Autonomous Agent")

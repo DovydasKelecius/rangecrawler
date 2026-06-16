@@ -35,7 +35,8 @@ class DatabaseManager:
                 ssh_port INTEGER,
                 ssh_username TEXT,
                 ssh_pkey_path TEXT,
-                ssh_host_key TEXT
+                ssh_host_key TEXT,
+                is_permitted INTEGER DEFAULT 0
             )
         ''')
         cursor.execute('''

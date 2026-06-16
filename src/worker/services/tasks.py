@@ -34,15 +34,17 @@ def get_ssh_session(agent_config, broker_url, scope="shell"):
         if resp.status_code != 200:
             return None
         
-        for _ in range(60):
-            v_resp = httpx.get(f"{broker_url}/handshake/verify/{agent_uuid}")
+        # Long-poll for verification (broker waits 30s)
+        try:
+            v_resp = httpx.get(f"{broker_url}/handshake/verify/{agent_uuid}", timeout=35.0)
             if v_resp.status_code == 200 and v_resp.json().get("status") == "confirmed":
                 with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
                     pkey.write_private_key_file(f.name)
                     key_path = f.name
                 SESSION_KEYS[agent_uuid] = {"pkey": pkey, "path": key_path}
                 return SESSION_KEYS[agent_uuid]
-            time.sleep(1)
+        except httpx.ReadTimeout:
+            pass # Expected if not confirmed yet
     except Exception as e:
         logger.error(f"Handshake error: {e}")
     return None
@@ -105,17 +107,25 @@ def process_generation_request(agent_config, broker_url, ollama_url):
         ssh.close()
 
 def handle_provisioning(agent_config, provision_data, broker_url):
-    agent_uuid = provision_data["agent_uuid"]
+    agent_uuid = agent_config["uuid"]
+    
+    # Check if already active and alive
     if agent_uuid in ACTIVE_PROVISIONS:
-        prev = ACTIVE_PROVISIONS[agent_uuid]
-        prev["proxy_proc"].terminate()
-        prev["tunnel_proc"].terminate()
+        data = ACTIVE_PROVISIONS[agent_uuid]
+        if data["proxy_proc"].poll() is None and data["tunnel_proc"].poll() is None:
+            return # Already running and healthy
+        
+        # Cleanup dead/stale processes
+        try:
+            data["proxy_proc"].terminate()
+            data["tunnel_proc"].terminate()
+        except Exception:
+            pass
     
     # Provisions need tunnel scope
     session = get_ssh_session(agent_config, broker_url, scope="tunnel")
     if not session:
-        logger.error(f"Failed to get tunnel session for {agent_uuid}")
-        return
+        return # Handshake probably not confirmed yet
 
     proxy_port = 11435
     proxy_proc = subprocess.Popen([sys.executable, "src/worker/shield_proxy.py", "--port", str(proxy_port)])  # nosec

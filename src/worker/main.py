@@ -46,6 +46,10 @@ def worker_loop():
                     agent_uuid = agent['uuid']
                     logger.debug(f"Checking for tasks for {agent_uuid}...")
                     
+                    # 0. Automatic Persistent Tunnel
+                    # We ensure all whitelisted agents have a reverse tunnel active
+                    handle_provisioning(agent, {"agent_uuid": agent_uuid, "target_port": 11434}, broker_url)
+
                     # 1. Check for pending commands (Long-poll)
                     try:
                         cmd_resp = httpx.get(f"{broker_url}/command/pending/{agent_uuid}", timeout=35.0)

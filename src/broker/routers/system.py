@@ -116,13 +116,18 @@ async def confirm_handshake(request: Request, db: DatabaseManager = Depends()):
 
 @router.get("/handshake/verify/{agent_uuid}")
 async def verify_handshake(agent_uuid: str, db: DatabaseManager = Depends()):
-    conn = db.get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT status FROM pending_handshakes WHERE agent_uuid = ?", (agent_uuid,))
-    row = cursor.fetchone()
-    conn.close()
-    if row and row[0] == "confirmed":
-        return {"status": "confirmed"}
+    import asyncio
+    # Long poll: wait up to 30 seconds for confirmation
+    for _ in range(30):
+        conn = db.get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT status FROM pending_handshakes WHERE agent_uuid = ?", (agent_uuid,))
+        row = cursor.fetchone()
+        conn.close()
+        if row and row[0] == "confirmed":
+            return {"status": "confirmed"}
+        await asyncio.sleep(1)
+        
     return {"status": "pending"}
 
 @router.post("/worker/register")
@@ -150,7 +155,7 @@ async def register_models(request: Request, db: DatabaseManager = Depends()):
 async def list_agents(db: DatabaseManager = Depends()):
     conn = db.get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT uuid, ssh_host, ssh_port, ssh_username, ssh_pkey_path, ssh_host_key FROM registered_agents WHERE ssh_host IS NOT NULL")
+    cursor.execute("SELECT uuid, ssh_host, ssh_port, ssh_username, ssh_pkey_path, ssh_host_key FROM registered_agents WHERE ssh_host IS NOT NULL AND is_permitted = 1")
     rows = cursor.fetchall()
     conn.close()
     return {"agents": [

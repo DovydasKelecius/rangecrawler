@@ -53,10 +53,29 @@ async def grant_permission(perm: ClientPermission, db: DatabaseManager = Depends
 async def list_permissions(db: DatabaseManager = Depends()):
     conn = db.get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT client_uuid, model_id, allow_tools, is_active FROM client_permissions")
+    cursor.execute("SELECT client_uuid, model_id, is_active FROM client_permissions")
     rows = cursor.fetchall()
     conn.close()
     return {"permissions": [
-        {"client_uuid": r[0], "model_id": r[1], "allow_tools": bool(r[2]), "is_active": bool(r[3])} 
+        {"client_uuid": r[0], "model_id": r[1], "is_active": bool(r[2])} 
         for r in rows
     ]}
+
+@router.post("/agent/permit")
+async def permit_agent(agent_uuid: str, permit: bool = True, db: DatabaseManager = Depends()):
+    conn = db.get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE registered_agents SET is_permitted = ? WHERE uuid = ?", (1 if permit else 0, agent_uuid))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "agent_uuid": agent_uuid, "permitted": permit}
+
+@router.get("/agents")
+async def list_all_agents(db: DatabaseManager = Depends()):
+    """Admin view: list ALL registered agents including non-permitted ones."""
+    conn = db.get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT uuid, ssh_host, ssh_username, is_permitted FROM registered_agents")
+    rows = cursor.fetchall()
+    conn.close()
+    return {"agents": [{"uuid": r[0], "ssh_host": r[1], "ssh_username": r[2], "is_permitted": bool(r[3])} for r in rows]}
