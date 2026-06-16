@@ -48,7 +48,7 @@ def worker_loop():
                     
                     # 0. Automatic Persistent Tunnel
                     # We ensure all whitelisted agents have a reverse tunnel active
-                    handle_provisioning(agent, {"agent_uuid": agent_uuid, "target_port": 11434}, broker_url)
+                    handle_provisioning(agent, {"agent_uuid": agent_uuid, "target_port": 11434}, broker_url, ollama_url)
 
                     # 1. Check for pending commands (Long-poll)
                     try:
@@ -62,7 +62,7 @@ def worker_loop():
                                 try:
                                     data = json.loads(cmd["command"])
                                     if data.get("action") == "provision_isolated_ollama":
-                                        handle_provisioning(agent, data, broker_url)
+                                        handle_provisioning(agent, data, broker_url, ollama_url)
                                 except Exception:
                                     pass  # nosec
                     except httpx.ReadTimeout:

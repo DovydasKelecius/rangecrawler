@@ -107,7 +107,7 @@ def process_generation_request(agent_config, broker_url, ollama_url):
     finally:
         ssh.close()
 
-def handle_provisioning(agent_config, provision_data, broker_url):
+def handle_provisioning(agent_config, provision_data, broker_url, ollama_url="http://localhost:11434"):
     agent_uuid = agent_config["uuid"]
     
     # Check if already active and alive
@@ -129,8 +129,8 @@ def handle_provisioning(agent_config, provision_data, broker_url):
         return # Handshake probably not confirmed yet
 
     proxy_port = 11435
-    logger.info(f"Starting Shield Proxy on {proxy_port} for {agent_uuid}")
-    proxy_proc = subprocess.Popen([sys.executable, "src/worker/shield_proxy.py", "--port", str(proxy_port)])  # nosec
+    logger.info(f"Starting Shield Proxy on {proxy_port} for {agent_uuid} (target: {ollama_url})")
+    proxy_proc = subprocess.Popen([sys.executable, "src/worker/shield_proxy.py", "--port", str(proxy_port), "--ollama-url", ollama_url])  # nosec
     
     tunnel_cmd = [
         "ssh", "-v", "-i", session["path"],
