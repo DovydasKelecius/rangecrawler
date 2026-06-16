@@ -93,6 +93,7 @@ curl -sSL http://<BROKER_IP>:8005/install | bash -s -- http://<BROKER_IP>:8005
 Once installed, use the following commands for lifecycle management:
 
 - **Check Tunnel/Keys Status**: `rc-agent --status`
+- **Whitelisting Agent (Run on Broker node)**: `python3 -m src.main admin permit <AGENT_UUID>`
 - **Stop Agent**: `sudo systemctl stop rangecrawler-agent`
 - **Start Agent**: `sudo systemctl start rangecrawler-agent`
 - **View Real-time Logs**: `journalctl -u rangecrawler-agent -f`

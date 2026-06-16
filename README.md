@@ -54,10 +54,14 @@ docker compose up -d --build broker worker
     curl -sSL http://<BROKER_IP>:8005/install | bash -s -- http://<BROKER_IP>:8005
     ```
     *This installs the agent as a background service and adds the `rc-agent` alias.*
-3.  **Manage the Agent**:
+3. **Manage the Agent**:
     - Check status: `rc-agent --status`
     - View logs: `journalctl -u rangecrawler-agent -f`
-4.  **Start the Worker**: `python3 src/main.py worker --broker-url http://<BROKER_IP>:8005`
+4. **Grant Permissions**:
+    - Whitelist agent: `python3 -m src.main admin permit <AGENT_UUID>`
+    - Grant model access: `python3 -m src.main admin grant <CLIENT_UUID> <MODEL_ID>`
+5. **Start the Worker**: `rc-worker`
+
 
 ## 5. Documentation
 
@@ -65,6 +69,7 @@ Detailed documentation is available in the `docs/` directory:
 
 - [System Deployment and Configuration Guide](docs/setup-guide.md): Comprehensive instructions for installation and environment setup.
 - [Operational Tutorial and User Manual](docs/usage-tutorial.md): Detailed guides for both administrators and clients.
+- [Research Architecture and Security Design](docs/RESEARCH.md): Formal overview of Zero Trust and Shield Proxy mechanisms for academic implementation.
 
 ## 6. License
 

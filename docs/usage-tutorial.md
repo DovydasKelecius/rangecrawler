@@ -20,10 +20,10 @@ This command:
 By default, the Broker registers new agents but does not permit them to establish tunnels. An administrator must whitelist the agent:
 
 ```bash
-python3 src/main.py admin permit <AGENT_UUID>
+python3 -m src.main admin permit <AGENT_UUID>
 ```
 
-To find the Agent UUID, run `rc-agent --status` on the target machine or `python3 src/main.py admin agents` on the Broker.
+To find the Agent UUID, run `rc-agent --status` on the target machine or `python3 -m src.main admin agents` on the Broker.
 
 ## 4. Automatic Tunneling
 Once an agent is permitted, the **Worker** will automatically establish a reverse SSH tunnel. This tunnel:
