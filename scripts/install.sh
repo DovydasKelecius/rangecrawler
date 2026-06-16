@@ -42,7 +42,7 @@ fi
 
 # 3. Download Headless Client
 echo "[*] Downloading agent script..."
-curl -sSL "https://raw.githubusercontent.com/DovydasKelecius/rangecrawler/feature/stable-tunneling/src/agent/headless_client.py" -o "$AGENT_FILE"
+curl -sSL "https://raw.githubusercontent.com/DovydasKelecius/rangecrawler/main/src/agent/headless_client.py" -o "$AGENT_FILE"
 
 # 4. Install dependencies in Venv
 echo "[*] Installing dependencies in virtual environment..."
