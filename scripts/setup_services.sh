@@ -20,6 +20,19 @@ fi
 
 echo "[*] Setting up RangeCrawler $COMPONENT Service..."
 
+# 0. Cleanup existing services to prevent overlap
+echo "[*] Cleaning up existing RangeCrawler services..."
+for svc in rangecrawler-broker rangecrawler-worker rangecrawler-agent; do
+    if systemctl is-active --quiet $svc; then
+        sudo systemctl stop $svc
+    fi
+    if [ -f "/etc/systemd/system/$svc.service" ]; then
+        sudo systemctl disable $svc
+        sudo rm "/etc/systemd/system/$svc.service"
+    fi
+done
+sudo systemctl daemon-reload
+
 if [[ "$COMPONENT" == "broker" ]]; then
     # 1. Broker Service
     echo "[*] Creating rangecrawler-broker.service..."
@@ -33,7 +46,8 @@ Type=simple
 User=$USER
 WorkingDirectory=$REPO_DIR
 Environment="RANGECRAWLER_CONFIG=$REPO_DIR/config.yaml"
-ExecStart=$VENV_DIR/bin/python3 src/main.py broker
+Environment="PYTHONPATH=$REPO_DIR"
+ExecStart=$VENV_DIR/bin/python3 -m src.main broker
 Restart=always
 RestartSec=5
 
@@ -44,9 +58,8 @@ EOF
     sudo systemctl enable --now rangecrawler-broker
     
     # Alias
-    if ! grep -q "alias rc-broker" "$HOME/.bashrc"; then
-        echo "alias rc-broker='$VENV_DIR/bin/python3 $REPO_DIR/src/main.py broker'" >> "$HOME/.bashrc"
-    fi
+    sed -i '/alias rc-broker/d' "$HOME/.bashrc"
+    echo "alias rc-broker='cd $REPO_DIR && PYTHONPATH=$REPO_DIR $VENV_DIR/bin/python3 -m src.main broker'" >> "$HOME/.bashrc"
     echo "[+] Broker service and 'rc-broker' alias ready."
 
 elif [[ "$COMPONENT" == "worker" ]]; then
@@ -70,7 +83,8 @@ Type=simple
 User=$USER
 WorkingDirectory=$REPO_DIR
 EnvironmentFile=$REPO_DIR/.env
-ExecStart=$VENV_DIR/bin/python3 src/main.py worker
+Environment="PYTHONPATH=$REPO_DIR"
+ExecStart=$VENV_DIR/bin/python3 -m src.main worker
 Restart=always
 RestartSec=10
 
@@ -81,9 +95,8 @@ EOF
     sudo systemctl enable --now rangecrawler-worker
     
     # Alias
-    if ! grep -q "alias rc-worker" "$HOME/.bashrc"; then
-        echo "alias rc-worker='$VENV_DIR/bin/python3 $REPO_DIR/src/main.py worker'" >> "$HOME/.bashrc"
-    fi
+    sed -i '/alias rc-worker/d' "$HOME/.bashrc"
+    echo "alias rc-worker='cd $REPO_DIR && PYTHONPATH=$REPO_DIR $VENV_DIR/bin/python3 -m src.main worker'" >> "$HOME/.bashrc"
     echo "[+] Worker service and 'rc-worker' alias ready."
 fi
 

@@ -11,6 +11,17 @@ fi
 
 echo "[*] Installing RangeCrawler Agent..."
 
+# 0. Cleanup existing service to prevent overlap
+if systemctl is-active --quiet rangecrawler-agent; then
+    echo "[*] Stopping existing rangecrawler-agent..."
+    sudo systemctl stop rangecrawler-agent
+fi
+if [ -f "/etc/systemd/system/rangecrawler-agent.service" ]; then
+    sudo systemctl disable rangecrawler-agent
+    sudo rm "/etc/systemd/system/rangecrawler-agent.service"
+fi
+sudo systemctl daemon-reload
+
 # 1. Dependencies
 if ! command -v python3 &> /dev/null; then
     echo "[-] Error: python3 not found."
@@ -70,6 +81,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable rangecrawler-agent
 
 # 7. Add easy CLI alias
+sed -i '/alias rc-agent/d' "$HOME/.bashrc"
 echo "alias rc-agent='$VENV_DIR/bin/python3 $AGENT_FILE --broker $BROKER_URL'" >> "$HOME/.bashrc"
 
 echo "[+] Agent installed and registered successfully."
