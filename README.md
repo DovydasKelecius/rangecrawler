@@ -49,8 +49,15 @@ docker compose up -d --build broker worker
 ### 4.4. Component Initialization
 
 1.  **Start the Broker**: `python3 src/main.py broker`
-2.  **Register an Agent**: `python3 src/main.py agent --broker http://<BROKER_IP>:8005`
-3.  **Start the Worker**: `python3 src/main.py worker --broker-url http://<BROKER_IP>:8005`
+2.  **Deploy an Agent (One-liner)**: 
+    ```bash
+    curl -sSL http://<BROKER_IP>:8005/install | bash -s -- http://<BROKER_IP>:8005
+    ```
+    *This installs the agent as a background service and adds the `rc-agent` alias.*
+3.  **Manage the Agent**:
+    - Check status: `rc-agent --status`
+    - View logs: `journalctl -u rangecrawler-agent -f`
+4.  **Start the Worker**: `python3 src/main.py worker --broker-url http://<BROKER_IP>:8005`
 
 ## 5. Documentation
 

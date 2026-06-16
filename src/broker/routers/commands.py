@@ -18,15 +18,23 @@ async def submit_command(request: Request, db: DatabaseManager = Depends()):
     conn.commit()
     conn.close()
     return {"status": "ok", "command_id": command_id}
-
-@router.get("/pending/{agent_uuid}")
+@router.get("/command/pending/{agent_uuid}")
 async def get_pending_commands(agent_uuid: str, db: DatabaseManager = Depends()):
-    conn = db.get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, command FROM command_queue WHERE agent_uuid = ? AND status = 'pending'", (agent_uuid,))
-    rows = cursor.fetchall()
-    conn.close()
-    return {"commands": [{"id": r[0], "command": r[1]} for r in rows]}
+    import asyncio
+    # Long poll: wait up to 30 seconds for a command
+    for _ in range(30):
+        conn = db.get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, command FROM command_queue WHERE agent_uuid = ? AND status = 'pending'", (agent_uuid,))
+        rows = cursor.fetchall()
+        conn.close()
+
+        if rows:
+            return {"commands": [{"id": r[0], "command": r[1]} for r in rows]}
+
+        await asyncio.sleep(1)
+
+    return {"commands": []}
 
 @router.post("/result")
 async def post_command_result(request: Request, db: DatabaseManager = Depends()):

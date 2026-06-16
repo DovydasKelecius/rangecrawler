@@ -72,11 +72,22 @@ python3 src/main.py broker --host 0.0.0.0 --port 8005
 
 ### 6.2. Deploying the Agent
 
-On the target machine providing the workspace, run the Agent to register with the Broker:
+For rapid deployment on remote machines (Agent nodes), use the automated one-line installer. This script handles virtual environment setup, dependency installation, and registers the agent as a background `systemd` service.
 
 ```bash
-python3 src/main.py agent --broker http://<BROKER_IP>:8005
+curl -sSL http://<BROKER_IP>:8005/install | bash -s -- http://<BROKER_IP>:8005
 ```
+
+#### 6.2.1. Agent Management
+
+Once installed, use the following commands for lifecycle management:
+
+- **Check Tunnel/Keys Status**: `rc-agent --status`
+- **Stop Agent**: `sudo systemctl stop rangecrawler-agent`
+- **Start Agent**: `sudo systemctl start rangecrawler-agent`
+- **View Real-time Logs**: `journalctl -u rangecrawler-agent -f`
+
+The agent utilizes **Long-Polling** (via `/handshake/poll/`) to wait for session requests from the Broker, ensuring minimal network overhead while remaining responsive to on-demand task requests.
 
 ### 6.3. Initializing the Worker
 

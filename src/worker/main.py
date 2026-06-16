@@ -46,20 +46,25 @@ def worker_loop():
                     agent_uuid = agent['uuid']
                     logger.debug(f"Checking for tasks for {agent_uuid}...")
                     
-                    # 1. Check for pending commands
-                    cmd_resp = httpx.get(f"{broker_url}/command/pending/{agent_uuid}", timeout=10.0)
-                    if cmd_resp.status_code == 200:
-                        tasks = cmd_resp.json().get("commands", [])
-                        if tasks:
-                            logger.info(f"Found {len(tasks)} tasks for {agent_uuid}.")
-                        for cmd in tasks:
-                            execute_remote_command(agent, cmd["id"], cmd["command"], broker_url)
-                            try:
-                                data = json.loads(cmd["command"])
-                                if data.get("action") == "provision_isolated_ollama":
-                                    handle_provisioning(agent, data, broker_url)
-                            except Exception:
-                                pass  # nosec
+                    # 1. Check for pending commands (Long-poll)
+                    try:
+                        cmd_resp = httpx.get(f"{broker_url}/command/pending/{agent_uuid}", timeout=35.0)
+                        if cmd_resp.status_code == 200:
+                            tasks = cmd_resp.json().get("commands", [])
+                            if tasks:
+                                logger.info(f"Found {len(tasks)} tasks for {agent_uuid}.")
+                            for cmd in tasks:
+                                execute_remote_command(agent, cmd["id"], cmd["command"], broker_url)
+                                try:
+                                    data = json.loads(cmd["command"])
+                                    if data.get("action") == "provision_isolated_ollama":
+                                        handle_provisioning(agent, data, broker_url)
+                                except Exception:
+                                    pass  # nosec
+                    except httpx.ReadTimeout:
+                        pass # Normal for long polling
+                    except Exception as e:
+                        logger.warning(f"Error polling tasks for {agent_uuid}: {e}")
                     
                     # 2. Check for generation requests (Context Sync Loop)
                     process_generation_request(agent, broker_url, ollama_url)
