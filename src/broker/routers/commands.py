@@ -18,7 +18,7 @@ async def submit_command(request: Request, db: DatabaseManager = Depends()):
     conn.commit()
     conn.close()
     return {"status": "ok", "command_id": command_id}
-@router.get("/command/pending/{agent_uuid}")
+@router.get("/pending/{agent_uuid}")
 async def get_pending_commands(agent_uuid: str, db: DatabaseManager = Depends()):
     import asyncio
     # Long poll: wait up to 30 seconds for a command

@@ -225,7 +225,8 @@ def admin_agents(
             typer.echo("-" * 70)
             for a in agents:
                 perm = "YES" if a['is_permitted'] else "NO"
-                typer.echo(f"{a['uuid']:<40} | {a['ssh_host']:<15} | {perm:<10}")
+                host = a.get('ssh_host') or "N/A"
+                typer.echo(f"{a['uuid']:<40} | {host:<15} | {perm:<10}")
         else:
             typer.echo(f"Error: {resp.text}")
     except Exception as e:
