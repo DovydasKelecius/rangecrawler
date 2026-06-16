@@ -47,7 +47,7 @@ async def security_middleware(request: Request, call_next):
     open_paths = [
         "/register", "/register/ssh", "/agents", 
         "/worker/register", "/worker/models", "/health", "/command/", "/chat/context",
-        "/admin", "/v1/models", "/install", "/download"
+        "/admin", "/v1/models", "/install", "/download", "/handshake/"
     ]
     if any(request.url.path.startswith(p) for p in open_paths):
         return await call_next(request)
