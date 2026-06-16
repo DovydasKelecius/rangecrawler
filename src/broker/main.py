@@ -34,7 +34,12 @@ from fastapi.responses import JSONResponse, FileResponse
 
 @app.get("/install")
 async def get_install_script():
-    script_path = os.path.join(os.path.dirname(__file__), "../../scripts/agent_manager.sh")
+    script_path = os.path.join(os.path.dirname(__file__), "../../scripts/install.sh")
+    return FileResponse(script_path, media_type="text/x-shellscript")
+
+@app.get("/uninstall")
+async def get_uninstall_script():
+    script_path = os.path.join(os.path.dirname(__file__), "../../scripts/uninstall.sh")
     return FileResponse(script_path, media_type="text/x-shellscript")
 
 @app.get("/download/agent")

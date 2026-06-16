@@ -181,7 +181,7 @@ class RangeCrawlerAgent:
         while True:
             try:
                 # 1. Heartbeat (less frequent now)
-                httpx.post(f"{self.broker_url}/register", json={"agent_uuid": self.uuid}, timeout=5.0)
+                httpx.post(f"{self.broker_url}/register", json={"uuid": self.uuid}, timeout=5.0)
                 
                 # 2. Long-poll for handshakes (waits on server)
                 resp = httpx.get(f"{self.broker_url}/handshake/poll/{self.uuid}", timeout=35.0)
@@ -236,20 +236,6 @@ class RangeCrawlerAgent:
         except Exception:
             pass
 
-def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey: Optional[str] = None, heartbeat: bool = False):
-    """Entry point for the RangeCrawler agent."""
-    agent = RangeCrawlerAgent(broker, username=user)
-    
-    # 1. Self-Register
-    if agent.register_self(ssh_port=ssh_port, pkey_path=pkey):
-        # 2. If successful and heartbeat requested, stay alive
-        if heartbeat:
-            agent.run_heartbeat(interval=600)
-        else:
-            print("[+] Done. Broker is now configured to use this machine.")
-            return True
-    return False
-
     def list_remote_models(self):
         """Fetch whitelisted models from the worker via the reverse tunnel."""
         print(f"[*] Querying available models from tunnel (localhost:11434)...")
@@ -277,6 +263,37 @@ def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey:
             print(f"[-] Error: Could not connect to local tunnel. Is the reverse tunnel active?")
             print(f"    Details: {e}")
 
+    def uninstall(self):
+        """Remove agent installation and service."""
+        print("[*] Preparing uninstallation...")
+        try:
+            # Download the uninstall script and run it
+            script_url = f"{self.broker_url}/uninstall"
+            resp = httpx.get(script_url, timeout=10.0)
+            if resp.status_code == 200:
+                with open("/tmp/rc_uninstall.sh", "w") as f:
+                    f.write(resp.text)
+                os.chmod("/tmp/rc_uninstall.sh", 0o755)
+                subprocess.run(["/tmp/rc_uninstall.sh"], check=True)
+            else:
+                print(f"[-] Failed to download uninstall script from broker: {resp.status_code}")
+        except Exception as e:
+            print(f"[-] Uninstallation failed: {e}")
+
+def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey: Optional[str] = None, heartbeat: bool = False):
+    """Entry point for the RangeCrawler agent."""
+    agent = RangeCrawlerAgent(broker, username=user)
+    
+    # 1. Self-Register
+    if agent.register_self(ssh_port=ssh_port, pkey_path=pkey):
+        # 2. If successful and heartbeat requested, stay alive
+        if heartbeat:
+            agent.run_heartbeat(interval=600)
+        else:
+            print("[+] Done. Broker is now configured to use this machine.")
+            return True
+    return False
+
 def main():
     parser = argparse.ArgumentParser(description="RangeCrawler Autonomous Agent")
     parser.add_argument("--broker", type=str, default="http://localhost:8005", help="URL of the RangeCrawler broker")
@@ -286,10 +303,15 @@ def main():
     parser.add_argument("--heartbeat", action="store_true", help="Run in heartbeat mode to keep session alive")
     parser.add_argument("--status", action="store_true", help="Check local agent and tunnel status")
     parser.add_argument("--models", action="store_true", help="List models available via the tunnel")
+    parser.add_argument("--uninstall", action="store_true", help="Remove agent installation and service")
     
     args = parser.parse_args()
 
     agent = RangeCrawlerAgent(args.broker, username=args.user)
+
+    if args.uninstall:
+        agent.uninstall()
+        return
 
     if args.status:
         agent.check_status()
