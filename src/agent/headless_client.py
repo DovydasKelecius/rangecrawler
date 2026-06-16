@@ -15,18 +15,31 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 class RangeCrawlerAgent:
-    def __init__(self, broker_url: str, working_dir: Optional[str] = None, username: Optional[str] = None):
+    def __init__(self, broker_url: str, username: Optional[str] = None):
         self.broker_url = broker_url.rstrip("/")
         self.username = username or getpass.getuser()
-        
-        # Default to / if user is root, otherwise current dir
-        if working_dir:
-            self.working_dir = os.path.abspath(working_dir)
-        else:
-            self.working_dir = "/" if self.username == "root" else os.getcwd()
-            
         self.hostname = socket.gethostname()
         self.os_info = f"{platform.system()} {platform.release()}"
+        self.uuid = self._get_or_create_uuid()
+
+    def _get_or_create_uuid(self) -> str:
+        """Read or generate a persistent unique ID for this agent."""
+        import uuid
+        uuid_path = os.path.join(os.path.expanduser("~"), ".rc_agent_id")
+        if os.path.exists(uuid_path):
+            try:
+                with open(uuid_path, "r") as f:
+                    return f.read().strip()
+            except Exception:
+                pass
+        
+        new_uuid = str(uuid.uuid4())
+        try:
+            with open(uuid_path, "w") as f:
+                f.write(new_uuid)
+        except Exception:
+            pass
+        return new_uuid
         
     def get_ssh_host_key(self) -> Optional[str]:
         """Read the local SSH host public key."""
@@ -70,73 +83,90 @@ class RangeCrawlerAgent:
             s.close()
         return ip
 
-    def authorize_worker(self, public_key: str):
-        """Add the worker's public key to authorized_keys with strict permissions."""
+    def authorize_worker(self, public_key: str, temporary: bool = False, scope: str = "shell"):
+        """Add the worker's public key to authorized_keys, replacing old keys for the same scope."""
         if not public_key:
             return
         
         try:
-            # Use the actual home directory of the registration user
-            if self.username == "root":
-                ssh_dir = "/root/.ssh"
-            else:
-                ssh_dir = os.path.expanduser(f"~{self.username}/.ssh")
-                if not os.path.exists(ssh_dir):
-                    ssh_dir = os.path.expanduser("~/.ssh")
-                
+            ssh_dir = os.path.expanduser("~/.ssh")
             auth_keys_path = os.path.join(ssh_dir, "authorized_keys")
                 
             # Ensure .ssh exists with 700
             if not os.path.exists(ssh_dir):
                 os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
-            else:
-                os.chmod(ssh_dir, 0o700)
             
-            # Check if already exists
+            # Zero Trust constraints based on scope
+            if scope == "tunnel":
+                restrictions = 'restrict,port-forwarding'
+            else:
+                restrictions = 'no-pty,no-X11-forwarding,no-agent-forwarding'
+                
+            new_entry = f'{restrictions} {public_key} # RangeCrawler Session ({scope})'
+            
+            lines = []
             if os.path.exists(auth_keys_path):
                 with open(auth_keys_path, "r") as f:
-                    if public_key in f.read():
-                        print(f"[*] Worker key already authorized in {auth_keys_path}")
-                        return
+                    for line in f:
+                        # Remove old keys for the SAME scope to prevent duplication
+                        if f"# RangeCrawler Session ({scope})" not in line:
+                            lines.append(line)
             
-            with open(auth_keys_path, "a") as f:
-                f.write(f"\n{public_key}\n")
+            lines.append(new_entry + "\n")
+            
+            with open(auth_keys_path, "w") as f:
+                f.writelines(lines)
             
             os.chmod(auth_keys_path, 0o600)
-            print(f"[+] Authorized worker key in {auth_keys_path}")
-        except PermissionError:
-            print(f"[-] ERROR: Permission denied writing to {ssh_dir}.")
-            print(f"    HINT: You are trying to register as user '{self.username}'.")
-            print("    Please run the agent with 'sudo' or check your permissions.")
+            print(f"[+] Authorized ephemeral key for {scope}.")
+            
+            if temporary:
+                import threading
+                def cleanup():
+                    time.sleep(3600)
+                    self.remove_worker_key(public_key)
+                threading.Thread(target=cleanup, daemon=True).start()
         except Exception as e:
             print(f"[-] ERROR: Failed to authorize worker key: {e}")
+
+    def remove_worker_key(self, public_key: str):
+        """Remove a specific worker key from authorized_keys."""
+        try:
+            auth_keys_path = os.path.expanduser("~/.ssh/authorized_keys")
+            if not os.path.exists(auth_keys_path):
+                return
+            
+            with open(auth_keys_path, "r") as f:
+                lines = f.readlines()
+            
+            with open(auth_keys_path, "w") as f:
+                for line in lines:
+                    if public_key not in line:
+                        f.write(line)
+            print(f"[*] Cleaned up session key.")
+        except Exception as e:
+            print(f"[-] Error cleaning up key: {e}")
 
     def register_self(self, ssh_port: int = 22, pkey_path: Optional[str] = None):
         """Register this machine as a remote workspace on the broker."""
         local_ip = self.get_local_ip()
         host_key = self.get_ssh_host_key()
         print(f"[*] Identifying as {self.username}@{local_ip} ({self.os_info})")
+        print(f"[*] Agent UUID: {self.uuid}")
         
         payload = {
+            "agent_uuid": self.uuid,
             "ssh_host": local_ip,
             "ssh_port": ssh_port,
             "ssh_username": self.username,
             "ssh_pkey_path": pkey_path,
-            "ssh_host_key": host_key,
-            "working_directory": self.working_dir
+            "ssh_host_key": host_key
         }
         
         try:
             resp = httpx.post(f"{self.broker_url}/register/ssh", json=payload, timeout=10.0)
             if resp.status_code == 200:
-                data = resp.json()
                 print(f"[+] Successfully registered with broker at {self.broker_url}")
-                print(f"[+] Workspace set to: {self.working_dir}")
-                
-                worker_key = data.get("worker_public_key")
-                if worker_key:
-                    self.authorize_worker(worker_key)
-                
                 return True
             else:
                 print(f"[-] Registration failed: {resp.text}")
@@ -145,45 +175,154 @@ class RangeCrawlerAgent:
             print(f"[-] Error connecting to broker: {e}")
             return False
 
-    def run_heartbeat(self, interval: int = 60):
-        """Keep the registration alive."""
-        print(f"[*] Starting heartbeat every {interval}s...")
+    def run_heartbeat(self, interval: int = 600):
+        """Keep the registration alive and poll for session handshakes."""
+        print(f"[*] Starting heartbeat every {interval}s (Long-polling enabled)...")
         while True:
             try:
-                httpx.post(f"{self.broker_url}/register", timeout=5.0)
+                # 1. Heartbeat (less frequent now)
+                httpx.post(f"{self.broker_url}/register", json={"uuid": self.uuid}, timeout=5.0)
+                
+                # 2. Long-poll for handshakes (waits on server)
+                resp = httpx.get(f"{self.broker_url}/handshake/poll/{self.uuid}", timeout=35.0)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("status") == "pending":
+                        pub_key = data.get("public_key")
+                        scope = data.get("scope", "shell")
+                        print(f"[*] New session request ({scope}). Authorizing ephemeral key...")
+                        self.authorize_worker(pub_key, temporary=True, scope=scope)
+                        httpx.post(f"{self.broker_url}/handshake/confirm", json={"agent_uuid": self.uuid}, timeout=5.0)
+                
+                # Wait a bit before next poll to be nice to the CPU, but not long because we want to be ready
+                time.sleep(1)
             except Exception as e: 
-                logger.warning(f"Registration failed: {e}")
-            time.sleep(interval)
+                logger.warning(f"Heartbeat/Handshake failed: {e}")
+                time.sleep(10) # Wait longer on error
 
-def run_agent(broker: str, working_dir: Optional[str] = None, user: Optional[str] = None, ssh_port: int = 22, pkey: Optional[str] = None, heartbeat: bool = False):
+    def check_status(self):
+        """Check for active tunnels and session keys."""
+        print(f"[*] Agent UUID: {self.uuid}")
+        print(f"[*] Broker: {self.broker_url}")
+
+        # 1. Check authorized_keys for RC sessions
+        auth_keys = os.path.expanduser("~/.ssh/authorized_keys")
+        sessions = []
+        if os.path.exists(auth_keys):
+            with open(auth_keys, "r") as f:
+                for line in f:
+                    if "RangeCrawler Session" in line:
+                        sessions.append(line.strip())
+
+        if sessions:
+            print(f"[+] Active Sessions ({len(sessions)}):")
+            for s in sessions:
+                # Extract scope if possible
+                scope = "unknown"
+                if "(" in s and ")" in s:
+                    scope = s.split("(")[-1].split(")")[0]
+                print(f"    - {scope} session active")
+        else:
+            print("[-] No active session keys.")
+
+        # 2. Check for reverse tunnels (ss -ntlp or netstat)
+        try:
+            # Look for local port 11434 being used by a reverse tunnel
+            output = subprocess.check_output(["ss", "-ntlp"], stderr=subprocess.DEVNULL).decode()
+            if "127.0.0.1:11434" in output:
+                print("[+] Tunnel: Reverse tunnel to Ollama (11434) detected.")
+            else:
+                print("[-] Tunnel: No reverse tunnel on 11434.")
+        except Exception:
+            pass
+
+    def list_remote_models(self):
+        """Fetch whitelisted models from the worker via the reverse tunnel."""
+        print(f"[*] Querying available models from tunnel (localhost:11434)...")
+        try:
+            resp = httpx.get("http://localhost:11434/api/tags", timeout=5.0)
+            if resp.status_code == 200:
+                models = resp.json().get("models", [])
+                if not models:
+                    print("[-] No models found on worker.")
+                    return
+                
+                print(f"[+] Available Models ({len(models)}):")
+                print(f"{'NAME':<20} | {'SIZE':<10} | {'MODIFIED'}")
+                print("-" * 50)
+                for m in models:
+                    name = m.get("name", "unknown")
+                    size_gb = m.get("size", 0) / (1024**3)
+                    modified = m.get("modified_at", "unknown")[:10]
+                    print(f"{name:<20} | {size_gb:>8.2f} GB | {modified}")
+            else:
+                print(f"[-] Failed to list models: {resp.status_code}")
+                if resp.status_code == 403:
+                    print("    (Access denied by Shield Proxy)")
+        except Exception as e:
+            print(f"[-] Error: Could not connect to local tunnel. Is the reverse tunnel active?")
+            print(f"    Details: {e}")
+
+    def uninstall(self):
+        """Remove agent installation and service."""
+        print("[*] Preparing uninstallation...")
+        try:
+            # Download the uninstall script and run it
+            script_url = f"{self.broker_url}/uninstall"
+            resp = httpx.get(script_url, timeout=10.0)
+            if resp.status_code == 200:
+                with open("/tmp/rc_uninstall.sh", "w") as f:
+                    f.write(resp.text)
+                os.chmod("/tmp/rc_uninstall.sh", 0o755)
+                subprocess.run(["/tmp/rc_uninstall.sh"], check=True)
+            else:
+                print(f"[-] Failed to download uninstall script from broker: {resp.status_code}")
+        except Exception as e:
+            print(f"[-] Uninstallation failed: {e}")
+
+def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey: Optional[str] = None, heartbeat: bool = False):
     """Entry point for the RangeCrawler agent."""
-    agent = RangeCrawlerAgent(broker, working_dir, username=user)
+    agent = RangeCrawlerAgent(broker, username=user)
     
     # 1. Self-Register
     if agent.register_self(ssh_port=ssh_port, pkey_path=pkey):
         # 2. If successful and heartbeat requested, stay alive
         if heartbeat:
-            agent.run_heartbeat()
+            agent.run_heartbeat(interval=600)
         else:
             print("[+] Done. Broker is now configured to use this machine.")
             return True
-    else:
-        return False
+    return False
 
 def main():
     parser = argparse.ArgumentParser(description="RangeCrawler Autonomous Agent")
     parser.add_argument("--broker", type=str, default="http://localhost:8005", help="URL of the RangeCrawler broker")
-    parser.add_argument("--dir", type=str, help="Working directory for the LLM (default: / if root, otherwise current dir)")
     parser.add_argument("--user", type=str, help="Username to register (default: current user)")
     parser.add_argument("--ssh-port", type=int, default=22, help="SSH port of this machine")
     parser.add_argument("--pkey", type=str, help="Path to the private key ON THE BROKER that accesses this machine")
     parser.add_argument("--heartbeat", action="store_true", help="Run in heartbeat mode to keep session alive")
+    parser.add_argument("--status", action="store_true", help="Check local agent and tunnel status")
+    parser.add_argument("--models", action="store_true", help="List models available via the tunnel")
+    parser.add_argument("--uninstall", action="store_true", help="Remove agent installation and service")
     
     args = parser.parse_args()
 
+    agent = RangeCrawlerAgent(args.broker, username=args.user)
+
+    if args.uninstall:
+        agent.uninstall()
+        return
+
+    if args.status:
+        agent.check_status()
+        return
+    
+    if args.models:
+        agent.list_remote_models()
+        return
+
     success = run_agent(
         broker=args.broker,
-        working_dir=args.dir,
         user=args.user,
         ssh_port=args.ssh_port,
         pkey=args.pkey,

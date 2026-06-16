@@ -62,21 +62,43 @@ When deploying via Docker Compose, the **Worker** utilizes `network_mode: host` 
 
 ## 6. Component-Specific Execution
 
-### 6.1. Starting the Broker
+### 6.1. Infrastructure Services (Broker & Worker)
 
-The Broker must be the first component initialized to facilitate subsequent registrations.
+For production or background execution on the main server, use the service setup script. This creates `systemd` services and adds CLI aliases.
 
 ```bash
-python3 src/main.py broker --host 0.0.0.0 --port 8005
+chmod +x scripts/setup_services.sh
+./scripts/setup_services.sh
+source ~/.bashrc
 ```
+
+#### 6.1.1. Management Commands
+
+| Action | Command |
+| :--- | :--- |
+| **Broker Logs** | `journalctl -u rangecrawler-broker -f` |
+| **Worker Logs** | `journalctl -u rangecrawler-worker -f` |
+| **Manual Start** | `rc-broker` or `rc-worker` |
 
 ### 6.2. Deploying the Agent
 
-On the target machine providing the workspace, run the Agent to register with the Broker:
+For rapid deployment on remote machines (Agent nodes), use the automated one-line installer. This script handles virtual environment setup, dependency installation, and registers the agent as a background `systemd` service.
 
 ```bash
-python3 src/main.py agent --broker http://<BROKER_IP>:8005
+curl -sSL http://<BROKER_IP>:8005/install | bash -s -- http://<BROKER_IP>:8005
 ```
+
+#### 6.2.1. Agent Management
+
+Once installed, use the following commands for lifecycle management:
+
+- **Check Tunnel/Keys Status**: `rc-agent --status`
+- **Whitelisting Agent (Run on Broker node)**: `python3 -m src.main admin permit <AGENT_UUID>`
+- **Stop Agent**: `sudo systemctl stop rangecrawler-agent`
+- **Start Agent**: `sudo systemctl start rangecrawler-agent`
+- **View Real-time Logs**: `journalctl -u rangecrawler-agent -f`
+
+The agent utilizes **Long-Polling** (via `/handshake/poll/`) to wait for session requests from the Broker, ensuring minimal network overhead while remaining responsive to on-demand task requests.
 
 ### 6.3. Initializing the Worker
 

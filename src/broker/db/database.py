@@ -19,86 +19,85 @@ class DatabaseManager:
 
     def _init_db(self, config: AppConfig):
         db_file = Path(self.db_path)
-        if db_file.is_dir():
-            raise IsADirectoryError(f"Database path '{self.db_path}' is a directory.")
-        
         db_file.parent.mkdir(parents=True, exist_ok=True)
         
-        try:
-            conn = self.get_db()
-            cursor = conn.cursor()
+        conn = self.get_db()
+        cursor = conn.cursor()
+        
+        # Enable WAL mode for better concurrency
+        cursor.execute("PRAGMA journal_mode=WAL")
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS registered_agents (
+                uuid TEXT PRIMARY KEY,
+                registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                ssh_host TEXT,
+                ssh_port INTEGER,
+                ssh_username TEXT,
+                ssh_pkey_path TEXT,
+                ssh_host_key TEXT,
+                is_permitted INTEGER DEFAULT 0
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pending_handshakes (
+                agent_uuid TEXT PRIMARY KEY,
+                public_key TEXT,
+                challenge TEXT,
+                scope TEXT DEFAULT 'shell',
+                status TEXT DEFAULT 'pending',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS worker_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_key TEXT,
+                last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS command_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_uuid TEXT,
+                command TEXT,
+                status TEXT DEFAULT 'pending',
+                result TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS models_registry (
+                id TEXT PRIMARY KEY,
+                remote_url TEXT NOT NULL,
+                ssh_host TEXT,
+                ssh_port INTEGER DEFAULT 22,
+                ssh_username TEXT,
+                ssh_pkey_path TEXT,
+                description TEXT,
+                is_active INTEGER DEFAULT 1
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS client_permissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_uuid TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                is_active INTEGER DEFAULT 1,
+                UNIQUE(client_uuid, model_id)
+            )
+        ''')
+        conn.commit()
+        
+        # Sync models from config.yaml into DB
+        for m in config.models:
             cursor.execute('''
-                CREATE TABLE IF NOT EXISTS allowed_ips (
-                    ip TEXT PRIMARY KEY,
-                    registered_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    ssh_host TEXT,
-                    ssh_port INTEGER,
-                    ssh_username TEXT,
-                    ssh_pkey_path TEXT,
-                    ssh_host_key TEXT,
-                    working_directory TEXT
-                )
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS worker_keys (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    public_key TEXT,
-                    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS command_queue (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    client_ip TEXT,
-                    command TEXT,
-                    status TEXT DEFAULT 'pending',
-                    result TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS models_registry (
-                    id TEXT PRIMARY KEY,
-                    remote_url TEXT NOT NULL,
-                    ssh_host TEXT,
-                    ssh_port INTEGER DEFAULT 22,
-                    ssh_username TEXT,
-                    ssh_pkey_path TEXT,
-                    description TEXT,
-                    is_active INTEGER DEFAULT 1
-                )
-            ''')
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS client_permissions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    client_ip TEXT NOT NULL,
-                    model_id TEXT NOT NULL,
-                    allow_tools INTEGER DEFAULT 1,
-                    max_usage_seconds INTEGER,
-                    used_seconds INTEGER DEFAULT 0,
-                    expires_at DATETIME,
-                    window_start TEXT,
-                    window_end TEXT,
-                    lease_start DATETIME,
-                    lease_duration INTEGER,
-                    is_active INTEGER DEFAULT 1,
-                    UNIQUE(client_ip, model_id)
-                )
-            ''')
-            conn.commit()
-            
-            # Sync models from config.yaml into DB
-            for m in config.models:
-                cursor.execute('''
-                    INSERT OR IGNORE INTO models_registry (id, remote_url, ssh_host, ssh_username, ssh_pkey_path)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (m.id, m.remote_url, m.ssh_host, m.ssh_username, m.ssh_pkey_path))
-            
-            conn.commit()
-            conn.close()
-        except sqlite3.Error as e:
-            logger.error(f"Failed to initialize database at {self.db_path}: {e}")
-            raise
+                INSERT OR IGNORE INTO models_registry (id, remote_url, ssh_host, ssh_username, ssh_pkey_path)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (m.id, m.remote_url, m.ssh_host, m.ssh_username, m.ssh_pkey_path))
+        
+        conn.commit()
+        conn.close()
 
     def get_models(self) -> Dict[str, ModelConfig]:
         """Fetch all active models from the database."""
@@ -120,16 +119,15 @@ class DatabaseManager:
             ) for row in rows
         }
 
-    def check_access(self, ip: str, model_id: str) -> Optional[ClientPermission]:
-        """Verify if a client IP has a valid permission for a model."""
+    def check_access(self, client_uuid: str, model_id: str) -> Optional[ClientPermission]:
+        """Verify if a client UUID has a valid permission for a model."""
         conn = self.get_db()
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT client_ip, model_id, allow_tools, max_usage_seconds, used_seconds, 
-                   expires_at, window_start, window_end, lease_start, lease_duration, is_active 
+            SELECT client_uuid, model_id, is_active 
             FROM client_permissions 
-            WHERE client_ip = ? AND model_id = ? AND is_active = 1
-        ''', (ip, model_id))
+            WHERE client_uuid = ? AND model_id = ? AND is_active = 1
+        ''', (client_uuid, model_id))
         row = cursor.fetchone()
         conn.close()
 
@@ -137,39 +135,20 @@ class DatabaseManager:
             return None
 
         return ClientPermission(
-            client_ip=row[0],
+            client_uuid=row[0],
             model_id=row[1],
-            allow_tools=bool(row[2]),
-            max_usage_seconds=row[3],
-            used_seconds=row[4],
-            expires_at=datetime.fromisoformat(row[5]) if row[5] else None,
-            window_start=row[6],
-            window_end=row[7],
-            lease_start=datetime.fromisoformat(row[8]) if row[8] else None,
-            lease_duration=row[9]
+            is_active=bool(row[2])
         )
 
-    def record_usage(self, ip: str, model_id: str, duration_seconds: int):
-        conn = self.get_db()
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE client_permissions 
-            SET used_seconds = used_seconds + ?,
-                lease_start = CASE WHEN lease_start IS NULL THEN ? ELSE lease_start END
-            WHERE client_ip = ? AND model_id = ?
-        ''', (duration_seconds, datetime.now().isoformat(), ip, model_id))
-        conn.commit()
-        conn.close()
-
-    def get_permitted_models(self, ip: str) -> List[ModelConfig]:
+    def get_permitted_models(self, client_uuid: str) -> List[ModelConfig]:
         conn = self.get_db()
         cursor = conn.cursor()
         cursor.execute('''
             SELECT m.id, m.remote_url, m.ssh_host, m.ssh_username, m.ssh_pkey_path, m.description, m.is_active
             FROM models_registry m
             JOIN client_permissions p ON m.id = p.model_id
-            WHERE p.client_ip = ? AND p.is_active = 1 AND m.is_active = 1
-        ''', (ip,))
+            WHERE p.client_uuid = ? AND p.is_active = 1 AND m.is_active = 1
+        ''', (client_uuid,))
         rows = cursor.fetchall()
         conn.close()
         
@@ -178,43 +157,43 @@ class DatabaseManager:
             ssh_pkey_path=r[4], description=r[5] or "", is_active=bool(r[6])
         ) for r in rows]
 
-    def register_ip(self, ip: str, ssh_config: Optional[AgentWorkspaceConfig] = None) -> bool:
+    def register_agent(self, agent_uuid: str, ssh_config: Optional[AgentWorkspaceConfig] = None) -> bool:
         try:
             conn = self.get_db()
             cursor = conn.cursor()
             if ssh_config:
                 cursor.execute('''
-                    INSERT INTO allowed_ips (ip, ssh_host, ssh_port, ssh_username, ssh_pkey_path, ssh_host_key, working_directory)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(ip) DO UPDATE SET
+                    INSERT INTO registered_agents (uuid, ssh_host, ssh_port, ssh_username, ssh_pkey_path, ssh_host_key)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(uuid) DO UPDATE SET
                         ssh_host=excluded.ssh_host, ssh_port=excluded.ssh_port, ssh_username=excluded.ssh_username,
-                        ssh_pkey_path=excluded.ssh_pkey_path, ssh_host_key=excluded.ssh_host_key, working_directory=excluded.working_directory
-                ''', (ip, ssh_config.ssh_host, ssh_config.ssh_port, ssh_config.ssh_username, ssh_config.ssh_pkey_path, ssh_config.ssh_host_key, ssh_config.working_directory))
+                        ssh_pkey_path=excluded.ssh_pkey_path, ssh_host_key=excluded.ssh_host_key
+                ''', (agent_uuid, ssh_config.ssh_host, ssh_config.ssh_port, ssh_config.ssh_username, ssh_config.ssh_pkey_path, ssh_config.ssh_host_key))
             else:
-                cursor.execute("INSERT OR IGNORE INTO allowed_ips (ip) VALUES (?)", (ip,))
+                cursor.execute("INSERT OR IGNORE INTO registered_agents (uuid) VALUES (?)", (agent_uuid,))
             conn.commit()
             conn.close()
             return True
         except Exception:
             return False
 
-    def is_allowed(self, ip: str) -> bool:
+    def is_agent_registered(self, agent_uuid: str) -> bool:
         conn = self.get_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT ip FROM allowed_ips WHERE ip = ?", (ip,))
+        cursor.execute("SELECT uuid FROM registered_agents WHERE uuid = ?", (agent_uuid,))
         result = cursor.fetchone()
         conn.close()
         return result is not None
 
-    def get_workspace_config(self, ip: str) -> Optional[AgentWorkspaceConfig]:
+    def get_agent_config(self, agent_uuid: str) -> Optional[AgentWorkspaceConfig]:
         conn = self.get_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT ssh_host, ssh_port, ssh_username, ssh_pkey_path, working_directory, ssh_host_key FROM allowed_ips WHERE ip = ? AND ssh_host IS NOT NULL", (ip,))
+        cursor.execute("SELECT ssh_host, ssh_port, ssh_username, ssh_pkey_path, ssh_host_key FROM registered_agents WHERE uuid = ? AND ssh_host IS NOT NULL", (agent_uuid,))
         row = cursor.fetchone()
         conn.close()
         if row:
             return AgentWorkspaceConfig(
-                client_ip=ip, ssh_host=row[0], ssh_port=row[1], ssh_username=row[2],
-                ssh_pkey_path=row[3], working_directory=row[4] or ".", ssh_host_key=row[5]
+                agent_uuid=agent_uuid, ssh_host=row[0], ssh_port=row[1], ssh_username=row[2],
+                ssh_pkey_path=row[3], ssh_host_key=row[4]
             )
         return None
