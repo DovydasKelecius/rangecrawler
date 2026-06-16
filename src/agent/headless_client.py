@@ -84,7 +84,7 @@ class RangeCrawlerAgent:
         return ip
 
     def authorize_worker(self, public_key: str, temporary: bool = False, scope: str = "shell"):
-        """Add the worker's public key to authorized_keys with scope-based permissions."""
+        """Add the worker's public key to authorized_keys, replacing old keys for the same scope."""
         if not public_key:
             return
         
@@ -100,22 +100,25 @@ class RangeCrawlerAgent:
             if scope == "tunnel":
                 restrictions = 'restrict,port-forwarding'
             else:
-                # Basic shell access, but no pty/x11/agent
                 restrictions = 'no-pty,no-X11-forwarding,no-agent-forwarding'
                 
-            entry = f'{restrictions} {public_key} # RangeCrawler Session ({scope})'
+            new_entry = f'{restrictions} {public_key} # RangeCrawler Session ({scope})'
             
-            # Check if already exists
+            lines = []
             if os.path.exists(auth_keys_path):
                 with open(auth_keys_path, "r") as f:
-                    if public_key in f.read():
-                        return
+                    for line in f:
+                        # Remove old keys for the SAME scope to prevent duplication
+                        if f"# RangeCrawler Session ({scope})" not in line:
+                            lines.append(line)
             
-            with open(auth_keys_path, "a") as f:
-                f.write(f"\n{entry}\n")
+            lines.append(new_entry + "\n")
+            
+            with open(auth_keys_path, "w") as f:
+                f.writelines(lines)
             
             os.chmod(auth_keys_path, 0o600)
-            print(f"[+] Authorized ephemeral key.")
+            print(f"[+] Authorized ephemeral key for {scope}.")
             
             if temporary:
                 import threading
