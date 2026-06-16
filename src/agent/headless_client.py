@@ -172,16 +172,16 @@ class RangeCrawlerAgent:
             print(f"[-] Error connecting to broker: {e}")
             return False
 
-    def run_heartbeat(self, interval: int = 60):
+    def run_heartbeat(self, interval: int = 600):
         """Keep the registration alive and poll for session handshakes."""
-        print(f"[*] Starting heartbeat every {interval}s...")
+        print(f"[*] Starting heartbeat every {interval}s (Long-polling enabled)...")
         while True:
             try:
-                # 1. Heartbeat
+                # 1. Heartbeat (less frequent now)
                 httpx.post(f"{self.broker_url}/register", json={"agent_uuid": self.uuid}, timeout=5.0)
                 
-                # 2. Poll for handshakes
-                resp = httpx.get(f"{self.broker_url}/handshake/poll/{self.uuid}", timeout=5.0)
+                # 2. Long-poll for handshakes (waits on server)
+                resp = httpx.get(f"{self.broker_url}/handshake/poll/{self.uuid}", timeout=35.0)
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get("status") == "pending":
@@ -190,9 +190,12 @@ class RangeCrawlerAgent:
                         print(f"[*] New session request ({scope}). Authorizing ephemeral key...")
                         self.authorize_worker(pub_key, temporary=True, scope=scope)
                         httpx.post(f"{self.broker_url}/handshake/confirm", json={"agent_uuid": self.uuid}, timeout=5.0)
+                
+                # Wait a bit before next poll to be nice to the CPU, but not long because we want to be ready
+                time.sleep(1)
             except Exception as e: 
                 logger.warning(f"Heartbeat/Handshake failed: {e}")
-            time.sleep(interval)
+                time.sleep(10) # Wait longer on error
 
 def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey: Optional[str] = None, heartbeat: bool = False):
     """Entry point for the RangeCrawler agent."""
@@ -202,12 +205,48 @@ def run_agent(broker: str, user: Optional[str] = None, ssh_port: int = 22, pkey:
     if agent.register_self(ssh_port=ssh_port, pkey_path=pkey):
         # 2. If successful and heartbeat requested, stay alive
         if heartbeat:
-            agent.run_heartbeat()
+            agent.run_heartbeat(interval=600)
         else:
             print("[+] Done. Broker is now configured to use this machine.")
             return True
     else:
         return False
+
+    def check_status(self):
+        """Check for active tunnels and session keys."""
+        print(f"[*] Agent UUID: {self.uuid}")
+        print(f"[*] Broker: {self.broker_url}")
+        
+        # 1. Check authorized_keys for RC sessions
+        auth_keys = os.path.expanduser("~/.ssh/authorized_keys")
+        sessions = []
+        if os.path.exists(auth_keys):
+            with open(auth_keys, "r") as f:
+                for line in f:
+                    if "RangeCrawler Session" in line:
+                        sessions.append(line.strip())
+        
+        if sessions:
+            print(f"[+] Active Sessions ({len(sessions)}):")
+            for s in sessions:
+                # Extract scope if possible
+                scope = "unknown"
+                if "(" in s and ")" in s:
+                    scope = s.split("(")[-1].split(")")[0]
+                print(f"    - {scope} session active")
+        else:
+            print("[-] No active session keys.")
+
+        # 2. Check for reverse tunnels (ss -ntlp or netstat)
+        try:
+            # Look for local port 11434 being used by a reverse tunnel
+            output = subprocess.check_output(["ss", "-ntlp"], stderr=subprocess.DEVNULL).decode()
+            if "127.0.0.1:11434" in output:
+                print("[+] Tunnel: Reverse tunnel to Ollama (11434) detected.")
+            else:
+                print("[-] Tunnel: No reverse tunnel on 11434.")
+        except Exception:
+            pass
 
 def main():
     parser = argparse.ArgumentParser(description="RangeCrawler Autonomous Agent")
@@ -216,8 +255,15 @@ def main():
     parser.add_argument("--ssh-port", type=int, default=22, help="SSH port of this machine")
     parser.add_argument("--pkey", type=str, help="Path to the private key ON THE BROKER that accesses this machine")
     parser.add_argument("--heartbeat", action="store_true", help="Run in heartbeat mode to keep session alive")
+    parser.add_argument("--status", action="store_true", help="Check local agent and tunnel status")
     
     args = parser.parse_args()
+
+    agent = RangeCrawlerAgent(args.broker, username=args.user)
+
+    if args.status:
+        agent.check_status()
+        return
 
     success = run_agent(
         broker=args.broker,

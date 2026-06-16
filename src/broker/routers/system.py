@@ -86,14 +86,19 @@ async def init_handshake(request: Request, db: DatabaseManager = Depends()):
 
 @router.get("/handshake/poll/{agent_uuid}")
 async def poll_handshake(agent_uuid: str, db: DatabaseManager = Depends()):
-    conn = db.get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT public_key, challenge, scope FROM pending_handshakes WHERE agent_uuid = ? AND status = 'pending'", (agent_uuid,))
-    row = cursor.fetchone()
-    conn.close()
-    if not row:
-        return {"status": "none"}
-    return {"status": "pending", "public_key": row[0], "challenge": row[1], "scope": row[2]}
+    import asyncio
+    # Long poll: wait up to 30 seconds for a pending handshake
+    for _ in range(30):
+        conn = db.get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT public_key, challenge, scope FROM pending_handshakes WHERE agent_uuid = ? AND status = 'pending'", (agent_uuid,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return {"status": "pending", "public_key": row[0], "challenge": row[1], "scope": row[2]}
+        await asyncio.sleep(1)
+        
+    return {"status": "none"}
 
 @router.post("/handshake/confirm")
 async def confirm_handshake(request: Request, db: DatabaseManager = Depends()):

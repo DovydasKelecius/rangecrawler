@@ -40,13 +40,40 @@ if ! "$VENV_DIR/bin/pip" install httpx python-dotenv; then
     exit 1
 fi
 
-# 5. Registration
+# 5. Registration and Service Setup
 echo "[*] Registering with Broker at $BROKER_URL..."
 if ! "$VENV_DIR/bin/python3" "$AGENT_FILE" --broker "$BROKER_URL"; then
     echo "[-] Error: Registration failed."
     exit 1
 fi
 
+# 6. Optional Systemd Service
+echo "[*] Setting up systemd service..."
+cat <<EOF | sudo tee /etc/systemd/system/rangecrawler-agent.service > /dev/null
+[Unit]
+Description=RangeCrawler Autonomous Agent
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$AGENT_DIR
+ExecStart=$VENV_DIR/bin/python3 $AGENT_FILE --broker $BROKER_URL --heartbeat
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable rangecrawler-agent
+
+# 7. Add easy CLI alias
+echo "alias rc-agent='$VENV_DIR/bin/python3 $AGENT_FILE --broker $BROKER_URL'" >> "$HOME/.bashrc"
+
 echo "[+] Agent installed and registered successfully."
-echo "[*] To keep agent running, use:"
-echo "    $VENV_DIR/bin/python3 $AGENT_FILE --broker $BROKER_URL --heartbeat"
+echo "[*] Management commands:"
+echo "    sudo systemctl start rangecrawler-agent   # Start background agent"
+echo "    sudo systemctl status rangecrawler-agent  # Check if running"
+echo "    rc-agent --status                        # Check tunnel status"
