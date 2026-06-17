@@ -1,8 +1,30 @@
-from fastapi import APIRouter, Depends
-from ..models import ModelConfig, ClientPermission
+from fastapi import APIRouter, Depends, Body
+from typing import Optional
+from ..models import ModelConfig, ClientPermission, AgentSSHConfig
 from ..db.database import DatabaseManager
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+@router.post("/agent/register/ssh")
+async def register_agent_ssh(
+    payload: dict = Body(...),
+    db: DatabaseManager = Depends()
+):
+    """Endpoint for Agents to register their SSH metadata."""
+    agent_uuid = payload.get("agent_uuid")
+    ssh_cfg = AgentSSHConfig(
+        agent_uuid=agent_uuid,
+        ssh_host=payload.get("ssh_host"),
+        ssh_port=payload.get("ssh_port", 22),
+        ssh_username=payload.get("ssh_username"),
+        ssh_pkey_path=payload.get("ssh_pkey_path"),
+        ssh_host_key=payload.get("ssh_host_key")
+    )
+    
+    success = db.register_agent(agent_uuid, ssh_cfg)
+    if not success:
+        return {"status": "error", "message": "Failed to register agent in database"}
+    return {"status": "ok", "agent_uuid": agent_uuid}
 
 @router.post("/models")
 async def add_model(model: ModelConfig, db: DatabaseManager = Depends()):

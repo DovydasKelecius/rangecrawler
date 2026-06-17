@@ -164,7 +164,7 @@ class RangeCrawlerAgent:
         }
         
         try:
-            resp = httpx.post(f"{self.broker_url}/register/ssh", json=payload, timeout=10.0)
+            resp = httpx.post(f"{self.broker_url}/admin/agent/register/ssh", json=payload, timeout=10.0)
             if resp.status_code == 200:
                 print(f"[+] Successfully registered with broker at {self.broker_url}")
                 return True
