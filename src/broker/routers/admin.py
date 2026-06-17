@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Body
 from typing import Optional
-from ..models import ModelConfig, ClientPermission, AgentSSHConfig
+from ..models import ModelConfig, ClientPermission, AgentWorkspaceConfig
 from ..db.database import DatabaseManager
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -12,7 +12,7 @@ async def register_agent_ssh(
 ):
     """Endpoint for Agents to register their SSH metadata."""
     agent_uuid = payload.get("agent_uuid")
-    ssh_cfg = AgentSSHConfig(
+    ssh_cfg = AgentWorkspaceConfig(
         agent_uuid=agent_uuid,
         ssh_host=payload.get("ssh_host"),
         ssh_port=payload.get("ssh_port", 22),
