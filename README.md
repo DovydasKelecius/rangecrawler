@@ -89,14 +89,5 @@ rc-agent --uninstall
 
 ---
 
-## Technical Path (Objectives)
-
-Developed as a semester project under **Professor dr. Linas Bukauskas** (Topic ID 65), this system demonstrates:
-- **Cloud Microagent Decomposition**: Offloading inference from resource-constrained hosts.
-- **Just-In-Time (JIT) Credentialing**: Ephemeral SSH key injection for Zero-Trust paths.
-- **Inference Shielding**: API-level whitelisting to prevent unauthorized model manipulation.
-
----
-
 ## License
 Distributed under the MIT License. See `LICENSE` for more information.
