@@ -1,117 +1,71 @@
 # RangeCrawler: System Deployment and Configuration Guide
 
-## 1. Introduction
+## 1. Overview
+This guide details the deployment of the RangeCrawler ecosystem, focusing on the automated Agent lifecycle and central Broker administration.
 
-This document provides a comprehensive technical guide for the deployment and configuration of RangeCrawler, a distributed brokerage system designed for secure Large Language Model (LLM) orchestration and remote agent execution. The architecture comprises four primary entities: the **Broker**, the **Worker**, the **Agent**, and the **Client CLI**.
+## 2. Agent Deployment (Client Side)
 
-## 2. System Architecture Overview
+The RangeCrawler Agent is designed for "zero-config" deployment on client machines (VMs or physical hardware).
 
-The RangeCrawler framework operates on a hub-and-spoke model where the Broker serves as the central registry and permission arbiter.
-
-- **Broker**: A FastAPI-based central server managing model registries, client permissions, and secure communication tunnels.
-- **Worker**: An execution node integrated with the Ollama inference engine, responsible for performing remote tasks via SSH.
-- **Agent**: A lightweight client deployed on target workspaces to provide secure, isolated execution environments.
-- **Client CLI**: The administrative and user interface for system interaction.
-
-## 3. Prerequisites
-
-Successful deployment requires the following environment specifications:
-
-- **Operating System**: Linux (recommended) or macOS.
-- **Runtime**: Python 3.10 or higher.
-- **Containerization**: Docker and Docker Compose (optional, for containerized deployment).
-- **Inference Engine**: Ollama (required for Worker nodes).
-- **Dependencies**: SSH server (sshd) must be active on Agent nodes.
-
-## 4. Installation Procedures
-
-### 4.1. Local Environment Setup
-
-To initialize the Python environment and install necessary dependencies, execute the following commands:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 4.2. Configuration Initialization
-
-The system utilizes a hierarchical configuration approach via `config.yaml` and environment-specific variables in a `.env` file.
-
-```bash
-cp config.example.yaml config.yaml
-cp .env.example .env
-```
-
-_Note: Ensure the `BROKER_URL` in the `.env` file correctly points to the Broker's accessible IP address._
-
-## 5. Deployment via Docker
-
-For containerized orchestration, RangeCrawler utilizes Docker Compose. This method ensures environment parity and simplifies network management.
-
-### 5.1. Building and Starting Services
-
-```bash
-docker compose up -d --build broker worker
-```
-
-### 5.3. Networking Considerations
-
-When deploying via Docker Compose, the **Worker** utilizes `network_mode: host` to facilitate communication with a local Ollama instance on the host machine. Consequently, the `BROKER_URL` in the `.env` file should typically be set to `http://localhost:8005` if the Broker is mapping its port to the host. If the components are distributed across different physical machines, this URL must point to the Broker's external IP address.
-
-## 6. Component-Specific Execution
-
-### 6.1. Infrastructure Services (Broker & Worker)
-
-For production or background execution on the main server, use the service setup script. This creates `systemd` services and adds CLI aliases.
-
-```bash
-chmod +x scripts/setup_services.sh
-./scripts/setup_services.sh
-source ~/.bashrc
-```
-
-#### 6.1.1. Management Commands
-
-| Action | Command |
-| :--- | :--- |
-| **Broker Logs** | `journalctl -u rangecrawler-broker -f` |
-| **Worker Logs** | `journalctl -u rangecrawler-worker -f` |
-| **Manual Start** | `rc-broker` or `rc-worker` |
-
-### 6.2. Deploying the Agent
-
-For rapid deployment on remote machines (Agent nodes), use the automated one-line installer. This script handles virtual environment setup, dependency installation, and registers the agent as a background `systemd` service.
+### 2.1. Automated Installation
+Execute the following one-liner on the client machine to install the Agent as a background service:
 
 ```bash
 curl -sSL http://<BROKER_IP>:8005/install | bash -s -- http://<BROKER_IP>:8005
 ```
 
-#### 6.2.1. Agent Management
+**What this script does:**
+1. Generates a persistent, hardware-bound UUID in `~/.rc_agent_id`.
+2. Creates a virtual environment in `~/.rangecrawler/venv`.
+3. Registers the Agent identity with the central Broker.
+4. Installs a `systemd` service for autonomous heartbeats and polling.
+5. Adds the `rc-agent` alias for manual management.
 
-Once installed, use the following commands for lifecycle management:
+### 2.2. Command-Line Interface (`rc-agent`)
 
-- **Check Tunnel/Keys Status**: `rc-agent --status`
-- **Whitelisting Agent (Run on Broker node)**: `python3 -m src.main admin permit <AGENT_UUID>`
-- **Stop Agent**: `sudo systemctl stop rangecrawler-agent`
-- **Start Agent**: `sudo systemctl start rangecrawler-agent`
-- **View Real-time Logs**: `journalctl -u rangecrawler-agent -f`
+| Argument | Description |
+| :--- | :--- |
+| `--status` | Displays the current connection status and hardware UUID. |
+| `--models` | Lists the AI models authorized for this agent by the administrator. |
+| `--broker <URL>` | Overrides the default Broker URL. |
+| `--heartbeat` | Triggers a manual registration/heartbeat poll. |
+| `--uninstall` | Triggers the uninstallation script. |
 
-The agent utilizes **Long-Polling** (via `/handshake/poll/`) to wait for session requests from the Broker, ensuring minimal network overhead while remaining responsive to on-demand task requests.
-
-### 6.3. Initializing the Worker
-
-The Worker connects to both the Broker and a local Ollama instance:
+### 2.3. Uninstallation
+To remove all Agent components, services, and identity data:
 
 ```bash
-python3 src/main.py worker --broker-url http://<BROKER_IP>:8005 --ollama-url http://localhost:11434
+rc-agent --uninstall
+# OR
+curl -sSL http://<BROKER_IP>:8005/uninstall | bash
 ```
 
-## 7. Administrative Management
+## 3. Infrastructure Setup (Server Side)
 
-Access control is managed through the administrative sub-command. To grant a client access to a specific model with a usage quota:
+### 3.1. Starting the Broker
+The Broker serves the API and the automated installation scripts.
 
 ```bash
-python3 src/main.py admin grant <CLIENT_IP> <MODEL_ID> --quota 3600
+# Start via alias (if setup_services.sh was run)
+rc-broker
+# OR via module
+python3 -m src.main broker
+```
+
+### 3.2. Administrative CLI (`rc-admin`)
+The `rc-admin` command (alias for `src/main.py admin`) manages the trust registry.
+
+- **Permit an Agent**: `rc-admin permit <UUID>`
+- **Grant Model**: `rc-admin grant <UUID> <MODEL_NAME> --quota <SECONDS>`
+- **List Agents**: `rc-admin list`
+- **Revoke Access**: `rc-admin revoke <UUID> <MODEL_NAME>`
+
+## 4. Worker Initialization
+Workers must be connected to a GPU-enabled Ollama instance.
+
+```bash
+# Start via alias
+rc-worker
+# OR via manual parameters
+python3 -m src.main worker --broker-url http://<BROKER_IP>:8005 --ollama-url http://localhost:11434
 ```

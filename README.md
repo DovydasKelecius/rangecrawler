@@ -1,76 +1,102 @@
-# RangeCrawler: Secure LLM Brokerage and Agent Orchestration
+# RangeCrawler: Secure LLM Brokerage & Agent Orchestration
 
-## 1. Overview
+RangeCrawler is a secure, distributed brokerage system designed for on-demand AI service delivery. It solves the "GPU-in-Virtualization" bottleneck by decoupling high-performance compute nodes (Workers) from restricted execution environments (Agents) via a **Zero-Trust Triple Handshake** and encrypted **Reverse SSH Tunneling**.
 
-RangeCrawler is a distributed, secure brokerage system designed for the orchestration of Large Language Models (LLMs) and autonomous agent execution. It provides a centralized framework for managing model inference (via Ollama) and facilitating remote task execution in isolated workspaces through secure SSH tunneling. The system is engineered to ensure controlled access, resource auditing, and seamless integration between distributed compute nodes and client environments.
+---
 
-## 2. Core Architectural Components
+## Quick Start (Client Machine)
 
-The system architecture follows a modular design, comprising four primary entities:
-
-- **Broker**: The central registry and permission arbiter (FastAPI). It manages model availability, client permissions, and secure communication tunnels.
-- **Worker**: The execution engine integrated with Ollama. It processes inference requests and performs remote command execution on registered Agents.
-- **Agent**: A lightweight client deployed on target machines to provide secure, isolated execution environments for remote tasks.
-- **Client CLI**: A robust command-line interface for system administration, chat-based interaction, and resource provisioning.
-
-## 3. Technology Stack
-
-- **Backend**: Python 3.10+, FastAPI, Uvicorn
-- **CLI**: Typer
-- **Database**: SQLite
-- **Communication**: SSH (Paramiko, SSHTunnel), HTTPX
-- **Inference**: Ollama
-- **Containerization**: Docker, Docker Compose
-
-## 4. Quick Start Guide
-
-### 4.1. Prerequisites
-
-Ensure you have Python 3.10+ and a functional SSH server. For Worker nodes, an active Ollama instance is required.
-
-### 4.2. Installation
+Deploy a lightweight, hardware-bound agent on any remote machine with a single command:
 
 ```bash
-git clone https://github.com/DovydasKelecius/rangecrawler.git
-cd RangeCrawler
-pip install -r requirements.txt
-cp config.example.yaml config.yaml
-cp .env.example .env
+# Automated Installation
+curl -sSL http://<BROKER_IP>:8005/install | bash -s -- http://<BROKER_IP>:8005
+
+# Verify Installation
+rc-agent --status
 ```
 
-### 4.3. Deployment via Docker
+---
 
-The easiest way to initialize the core infrastructure is via Docker Compose:
+## System Architecture
+
+The system operates across three specialized planes:
+
+1.  **Broker (Control Plane)**: Central arbiter for identity and ACL. Manages JIT credentialing.
+2.  **Worker (Compute Plane)**: GPU-equipped host running Ollama and the **Shield Proxy** (Inference Firewall).
+3.  **Agent (Client Space)**: Lightweight endpoint providing a local loopback (`localhost:11434`) to remote GPUs.
+
+---
+
+## Service Management (systemd)
+
+All RangeCrawler components are managed as standard `systemd` services for high availability and autonomous recovery.
+
+### Component Services
+| Entity | Service Name | Description |
+| :--- | :--- | :--- |
+| **Broker** | `rangecrawler-broker` | API & Registration Hub |
+| **Worker** | `rangecrawler-worker` | Compute & Tunnel Engine |
+| **Agent** | `rangecrawler-agent` | Loopback & Key Management |
+
+### Management Commands
+| Action | Command |
+| :--- | :--- |
+| **Start Service** | `sudo systemctl start <service-name>` |
+| **Stop Service** | `sudo systemctl stop <service-name>` |
+| **Restart Service** | `sudo systemctl restart <service-name>` |
+| **View Live Logs** | `journalctl -u <service-name> -f` |
+| **Check Status** | `systemctl status <service-name>` |
+
+---
+
+## Command Line Interface (CLI)
+
+### Agent CLI (`rc-agent`)
+| Argument | Description |
+| :--- | :--- |
+| `--status` | Show connection status and hardware UUID. |
+| `--models` | List AI models authorized for this agent. |
+| `--heartbeat` | Manually trigger identity registration poll. |
+| `--uninstall` | Completely remove agent and service from machine. |
+
+### Admin CLI (`rc-admin`)
+Used on the Broker machine to manage the trust registry.
+```bash
+# Permit a newly registered hardware UUID
+rc-admin permit <AGENT_UUID>
+
+# Grant model access (e.g., Llama3 with 1h quota)
+rc-admin grant <AGENT_UUID> llama3 --quota 3600
+
+# Revoke access
+rc-admin revoke <AGENT_UUID> llama3
+```
+
+---
+
+## Uninstallation
+
+To remove all components, virtual environments, and service configurations from a client machine:
 
 ```bash
-docker compose up -d --build broker worker
+# One-liner via curl
+curl -sSL http://<BROKER_IP>:8005/uninstall | bash
+
+# OR via CLI alias
+rc-agent --uninstall
 ```
 
-### 4.4. Component Initialization
+---
 
-1.  **Start the Broker**: `python3 src/main.py broker`
-2.  **Deploy an Agent (One-liner)**: 
-    ```bash
-    curl -sSL http://<BROKER_IP>:8005/install | bash -s -- http://<BROKER_IP>:8005
-    ```
-    *This installs the agent as a background service and adds the `rc-agent` alias.*
-3. **Manage the Agent**:
-    - Check status: `rc-agent --status`
-    - View logs: `journalctl -u rangecrawler-agent -f`
-4. **Grant Permissions**:
-    - Whitelist agent: `python3 -m src.main admin permit <AGENT_UUID>`
-    - Grant model access: `python3 -m src.main admin grant <CLIENT_UUID> <MODEL_ID>`
-5. **Start the Worker**: `rc-worker`
+## Technical Path (Objectives)
 
+Developed as a semester project under **Professor dr. Linas Bukauskas** (Topic ID 65), this system demonstrates:
+- **Cloud Microagent Decomposition**: Offloading inference from resource-constrained hosts.
+- **Just-In-Time (JIT) Credentialing**: Ephemeral SSH key injection for Zero-Trust paths.
+- **Inference Shielding**: API-level whitelisting to prevent unauthorized model manipulation.
 
-## 5. Documentation
+---
 
-Detailed documentation is available in the `docs/` directory:
-
-- [System Deployment and Configuration Guide](docs/setup-guide.md): Comprehensive instructions for installation and environment setup.
-- [Operational Tutorial and User Manual](docs/usage-tutorial.md): Detailed guides for both administrators and clients.
-- [Research Architecture and Security Design](docs/RESEARCH.md): Formal overview of Zero Trust and Shield Proxy mechanisms for academic implementation.
-
-## 6. License
-
-This project is licensed under the MIT License.
+## License
+Distributed under the MIT License. See `LICENSE` for more information.
