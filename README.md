@@ -4,6 +4,43 @@ RangeCrawler is a secure, distributed brokerage system designed for on-demand AI
 
 ---
 
+## Infrastructure Setup (Broker & Worker)
+
+The main RangeCrawler infrastructure requires a Python 3.10+ environment. Follow these steps to set up the Broker and Worker nodes.
+
+### 1. Clone & Environment Preparation
+```bash
+git clone https://github.com/DovydasKelecius/Defense_Paper.git
+cd Defense_Paper/rangecrawler
+
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 2. Deploy Services
+Use the provided modular setup script to install the systemd services and CLI aliases.
+
+#### Setup Broker
+Run this on your control plane server:
+```bash
+./scripts/setup_services.sh broker
+source ~/.bashrc
+```
+
+#### Setup Worker
+Run this on your GPU-equipped compute node:
+```bash
+./scripts/setup_services.sh worker
+source ~/.bashrc
+```
+*Note: The worker setup will prompt for the Broker URL and Ollama URL if no `.env` file exists.*
+
+---
+
 ## Quick Start (Client Machine)
 
 Deploy a lightweight, hardware-bound agent on any remote machine with a single command:
