@@ -10,8 +10,8 @@ The main RangeCrawler infrastructure requires a Python 3.10+ environment. Follow
 
 ### 1. Clone & Environment Preparation
 ```bash
-git clone https://github.com/DovydasKelecius/Defense_Paper.git
-cd Defense_Paper/rangecrawler
+git clone https://github.com/DovydasKelecius/rangecrawler.git
+cd rangecrawler
 
 # Create virtual environment
 python3 -m venv venv
