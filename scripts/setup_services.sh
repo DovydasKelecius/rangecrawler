@@ -57,10 +57,12 @@ EOF
     sudo systemctl daemon-reload
     sudo systemctl enable --now rangecrawler-broker
     
-    # Alias
+    # Aliases
     sed -i '/alias rc-broker/d' "$HOME/.bashrc"
+    sed -i '/alias rc-admin/d' "$HOME/.bashrc"
     echo "alias rc-broker='cd $REPO_DIR && PYTHONPATH=$REPO_DIR $VENV_DIR/bin/python3 -m src.main broker'" >> "$HOME/.bashrc"
-    echo "[+] Broker service and 'rc-broker' alias ready."
+    echo "alias rc-admin='cd $REPO_DIR && PYTHONPATH=$REPO_DIR $VENV_DIR/bin/python3 -m src.main admin'" >> "$HOME/.bashrc"
+    echo "[+] Broker services and aliases ('rc-broker', 'rc-admin') ready."
 
 elif [[ "$COMPONENT" == "worker" ]]; then
     # 2. Worker Service
