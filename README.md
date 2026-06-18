@@ -47,7 +47,7 @@ Deploy a lightweight, hardware-bound agent on any remote machine with a single c
 
 ```bash
 # Automated Installation
-curl -sSL http://<BROKER_IP>:8005/install | bash -s -- http://<BROKER_IP>:8005
+curl -sSL http://www.github.com/DovydasKelecius/rangecrawler/main/scripts/install.sh | bash -s -- http://<BROKER_IP>:8005
 
 # Verify Installation
 rc-agent --status
