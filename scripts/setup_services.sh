@@ -14,8 +14,13 @@ if [[ "$COMPONENT" != "broker" && "$COMPONENT" != "worker" ]]; then
 fi
 
 if [ ! -d "$VENV_DIR" ]; then
-    echo "[-] Error: Virtual environment not found at $VENV_DIR. Please run setup first."
-    exit 1
+    echo "[*] Creating virtual environment at $VENV_DIR..."
+    python3 -m venv "$VENV_DIR"
+    source "$VENV_DIR/bin/activate"
+    echo "[*] Installing Python dependencies..."
+    pip install --upgrade pip
+    pip install -r "$REPO_DIR/requirements.txt"
+    echo "[*] Virtual environment setup complete."
 fi
 
 echo "[*] Setting up RangeCrawler $COMPONENT Service..."
