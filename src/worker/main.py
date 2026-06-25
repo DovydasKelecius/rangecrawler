@@ -17,6 +17,11 @@ def worker_loop():
     broker_url = os.getenv("BROKER_URL", "http://localhost:8005")
     ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434")
     
+    if not broker_url.startswith(("http://", "https://")):
+        broker_url = f"http://{broker_url}"
+    if not ollama_url.startswith(("http://", "https://")):
+        ollama_url = f"http://{ollama_url}"
+    
     logger.info(f"[READY] Worker connected to {broker_url}. Listening for prompts...")
     
     iteration = 0
