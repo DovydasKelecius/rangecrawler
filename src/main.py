@@ -140,7 +140,10 @@ admin_app = typer.Typer(help="Administrative tools for managing models and permi
 def admin_grant(
     uuid: str = typer.Argument(..., help="Client UUID"),
     model: str = typer.Argument(..., help="Model ID"),
-    broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="Broker URL")
+    # Load broker config for default URL
+    default_cfg = load_config(os.getenv("RANGECRAWLER_CONFIG", "config.yaml")).broker
+    default_url = f"http://{default_cfg.host}:{default_cfg.default_port}"
+    broker_url: str = typer.Option(os.getenv("BROKER_URL", default_url), "--broker", help="Broker URL")
 ):
     """Grant model access to a client."""
     payload = {
@@ -160,7 +163,10 @@ def admin_grant(
 
 @admin_app.command("models")
 def admin_models(
-    broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="Broker URL")
+    # Load broker config for default URL
+    default_cfg = load_config(os.getenv("RANGECRAWLER_CONFIG", "config.yaml")).broker
+    default_url = f"http://{default_cfg.host}:{default_cfg.default_port}"
+    broker_url: str = typer.Option(os.getenv("BROKER_URL", default_url), "--broker", help="Broker URL")
 ):
     """List registered models."""
     try:
@@ -177,7 +183,10 @@ def admin_models(
 
 @admin_app.command("permissions")
 def admin_permissions(
-    broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="Broker URL")
+    # Load broker config for default URL
+    default_cfg = load_config(os.getenv("RANGECRAWLER_CONFIG", "config.yaml")).broker
+    default_url = f"http://{default_cfg.host}:{default_cfg.default_port}"
+    broker_url: str = typer.Option(os.getenv("BROKER_URL", default_url), "--broker", help="Broker URL")
 ):
     """List all client model permissions."""
     try:
@@ -198,7 +207,10 @@ def admin_permissions(
 def admin_permit(
     uuid: str = typer.Argument(..., help="Agent UUID to permit"),
     permit: bool = typer.Option(True, help="Set to False to revoke permission"),
-    broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="Broker URL")
+    # Load broker config for default URL
+    default_cfg = load_config(os.getenv("RANGECRAWLER_CONFIG", "config.yaml")).broker
+    default_url = f"http://{default_cfg.host}:{default_cfg.default_port}"
+    broker_url: str = typer.Option(os.getenv("BROKER_URL", default_url), "--broker", help="Broker URL")
 ):
     """Whitelist an agent for automatic reverse tunneling."""
     params = {"agent_uuid": uuid, "permit": permit}
@@ -214,7 +226,10 @@ def admin_permit(
 
 @admin_app.command("agents")
 def admin_agents(
-    broker_url: str = typer.Option(os.getenv("BROKER_URL", "http://localhost:8000"), "--broker", help="Broker URL")
+    # Load broker config for default URL
+    default_cfg = load_config(os.getenv("RANGECRAWLER_CONFIG", "config.yaml")).broker
+    default_url = f"http://{default_cfg.host}:{default_cfg.default_port}"
+    broker_url: str = typer.Option(os.getenv("BROKER_URL", default_url), "--broker", help="Broker URL")
 ):
     """List all registered agents and their permit status."""
     try:
